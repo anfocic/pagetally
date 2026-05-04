@@ -1,0 +1,184 @@
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { Analytics } from '../src/index'
+
+const ENDPOINT = 'https://example.com/collect'
+const SITE_ID = 'test-site'
+
+async function getPayloadFromCall(
+  call: unknown[],
+): Promise<Record<string, unknown>> {
+  const blob = call[1] as Blob
+  return JSON.parse(await blob.text())
+}
+
+describe('Analytics', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    window.innerWidth = 1440
+  })
+
+  describe('constructor', () => {
+    it('throws without endpoint', () => {
+      // @ts-expect-error testing missing endpoint
+      expect(() => new Analytics({})).toThrow('endpoint is required')
+    })
+
+    it('creates instance with endpoint', () => {
+      const a = new Analytics({ endpoint: ENDPOINT, siteId: SITE_ID, autoTrack: false })
+      expect(a).toBeInstanceOf(Analytics)
+      a.stop()
+    })
+  })
+
+  describe('track()', () => {
+    it('sends event payload', async () => {
+      const spy = vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
+      const a = new Analytics({ endpoint: ENDPOINT, siteId: SITE_ID, autoTrack: false })
+
+      a.track('signup', { plan: 'pro' })
+
+      expect(spy).toHaveBeenCalledTimes(1)
+      const payload = await getPayloadFromCall(spy.mock.calls[0]!)
+      expect(payload.t).toBe('event')
+      expect(payload.n).toBe('signup')
+      expect(payload.pr).toEqual({ plan: 'pro' })
+
+      a.stop()
+    })
+
+    it('does not track after stop', () => {
+      const spy = vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
+      const a = new Analytics({ endpoint: ENDPOINT, siteId: SITE_ID, autoTrack: false })
+
+      a.stop()
+      a.track('should-not-send')
+
+      expect(spy).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('page()', () => {
+    it('sends pageview payload', async () => {
+      const spy = vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
+      const a = new Analytics({ endpoint: ENDPOINT, siteId: SITE_ID, autoTrack: false })
+
+      a.page('/about')
+
+      expect(spy).toHaveBeenCalledTimes(1)
+      const payload = await getPayloadFromCall(spy.mock.calls[0]!)
+      expect(payload.t).toBe('pageview')
+      expect(payload.p).toBe('/about')
+
+      a.stop()
+    })
+
+    it('does not track after stop', () => {
+      const spy = vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
+      const a = new Analytics({ endpoint: ENDPOINT, siteId: SITE_ID, autoTrack: false })
+
+      a.stop()
+      a.page('/about')
+
+      expect(spy).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('autoTrack', () => {
+    it('fires page view on init', async () => {
+      const spy = vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
+
+      const a = new Analytics({ endpoint: ENDPOINT, siteId: SITE_ID, autoTrack: true })
+      expect(spy).toHaveBeenCalledTimes(1)
+
+      const payload = await getPayloadFromCall(spy.mock.calls[0]!)
+      expect(payload.t).toBe('pageview')
+
+      a.stop()
+    })
+
+    it('fires page view on pushState', async () => {
+      vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
+      const a = new Analytics({ endpoint: ENDPOINT, siteId: SITE_ID, autoTrack: true })
+
+      const before = navigator.sendBeacon.mock.calls.length
+      history.pushState({}, '', '/new-page')
+
+      expect(navigator.sendBeacon).toHaveBeenCalledTimes(before + 1)
+      a.stop()
+    })
+
+    it('fires page view on replaceState', async () => {
+      vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
+      const a = new Analytics({ endpoint: ENDPOINT, siteId: SITE_ID, autoTrack: true })
+
+      const before = navigator.sendBeacon.mock.calls.length
+      history.replaceState({}, '', '/replaced')
+
+      expect(navigator.sendBeacon).toHaveBeenCalledTimes(before + 1)
+      a.stop()
+    })
+
+    it('does not fire on init when autoTrack is false', () => {
+      const spy = vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
+
+      const a = new Analytics({ endpoint: ENDPOINT, siteId: SITE_ID, autoTrack: false })
+      expect(spy).not.toHaveBeenCalled()
+
+      a.stop()
+    })
+
+    it('does not fire pushState after stop', () => {
+      vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
+      const a = new Analytics({ endpoint: ENDPOINT, siteId: SITE_ID, autoTrack: true })
+      a.stop()
+
+      const before = navigator.sendBeacon.mock.calls.length
+      history.pushState({}, '', '/after-stop')
+
+      expect(navigator.sendBeacon).toHaveBeenCalledTimes(before)
+    })
+  })
+
+  describe('respectDNT', () => {
+    it('does not send when DNT is enabled and respectDNT is true', () => {
+      Object.defineProperty(navigator, 'doNotTrack', {
+        value: '1',
+        configurable: true,
+      })
+      const spy = vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
+
+      const a = new Analytics({
+        endpoint: ENDPOINT,
+        siteId: SITE_ID,
+        autoTrack: false,
+        respectDNT: true,
+      })
+
+      a.track('test')
+      a.page('/test')
+      expect(spy).not.toHaveBeenCalled()
+      a.stop()
+
+      Object.defineProperty(navigator, 'doNotTrack', {
+        value: null,
+        configurable: true,
+      })
+    })
+  })
+
+  describe('stop()', () => {
+    it('cleans up and prevents further tracking', () => {
+      const spy = vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
+      const a = new Analytics({ endpoint: ENDPOINT, siteId: SITE_ID, autoTrack: true })
+
+      const callsAtInit = navigator.sendBeacon.mock.calls.length
+      a.stop()
+
+      a.track('event')
+      a.page('/page')
+      history.pushState({}, '', '/after-stop')
+
+      expect(navigator.sendBeacon).toHaveBeenCalledTimes(callsAtInit)
+    })
+  })
+})

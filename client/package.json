@@ -1,0 +1,40 @@
+{
+  "name": "pagetally",
+  "version": "0.1.0",
+  "description": "GDPR-compliant, cookie-free web analytics",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "analytics",
+    "privacy",
+    "gdpr",
+    "cookie-free",
+    "web-vitals"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "tsup": "^8.5.1",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.4",
+    "happy-dom": "^20.9.0"
+  }
+}
