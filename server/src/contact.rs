@@ -1,7 +1,7 @@
 use crate::state::AppState;
+use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::Json;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]

@@ -1,8 +1,8 @@
 use crate::types::{RawPayload, Summary, TimeseriesPoint, TopDimension, TopRow, Vitals};
 
 const PAGELEAVE_DUR_MAX_MS: i32 = 1_800_000;
-use sqlx::postgres::{PgPool, PgPoolOptions};
 use sqlx::Row;
+use sqlx::postgres::{PgPool, PgPoolOptions};
 use std::time::Duration;
 
 pub async fn connect(database_url: &str) -> sqlx::Result<PgPool> {

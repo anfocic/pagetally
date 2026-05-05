@@ -3,15 +3,15 @@ pub mod contact;
 pub mod db;
 pub mod email;
 pub mod ingest;
-pub mod stats;
 pub mod state;
+pub mod stats;
 pub mod types;
 
+use axum::Router;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::{self, Next};
 use axum::routing::{get, post};
-use axum::Router;
 use state::AppState;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;

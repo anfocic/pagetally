@@ -1,9 +1,9 @@
 use crate::state::AppState;
 use crate::types::TopDimension;
+use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::Json;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -48,10 +48,10 @@ fn range(days: u32) -> (i64, i64) {
 }
 
 fn site_check(state: &AppState, site: &str) -> Result<(), StatusCode> {
-    if let Some(allowed) = &state.config.allowed_sites {
-        if !allowed.iter().any(|s| s == site) {
-            return Err(StatusCode::FORBIDDEN);
-        }
+    if let Some(allowed) = &state.config.allowed_sites
+        && !allowed.iter().any(|s| s == site)
+    {
+        return Err(StatusCode::FORBIDDEN);
     }
     Ok(())
 }

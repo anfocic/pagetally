@@ -32,10 +32,16 @@ ADMIN_TOKEN="${ADMIN_TOKEN:-}"
 PG_DB="${PG_DB:-pagetally}"
 PG_USER="${PG_USER:-pagetally}"
 
+ENV_FILE="/opt/pagetally/pagetally.env"
+
+# Re-runs reuse the existing token. Only generate on first install.
 if [[ -z "$ADMIN_TOKEN" ]]; then
-    ADMIN_TOKEN="$(openssl rand -hex 24)"
-    echo "==> generated ADMIN_TOKEN (save this — it gates /stats/*):"
-    echo "    $ADMIN_TOKEN"
+    if [[ -f "$ENV_FILE" ]] && grep -q '^ADMIN_TOKEN=' "$ENV_FILE"; then
+        ADMIN_TOKEN="$(grep '^ADMIN_TOKEN=' "$ENV_FILE" | cut -d= -f2-)"
+    else
+        ADMIN_TOKEN="$(openssl rand -hex 24)"
+        ADMIN_TOKEN_GENERATED=1
+    fi
 fi
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -86,16 +92,16 @@ chown -R pagetally:pagetally /opt/pagetally/migrations
 echo "==> env file"
 PG_PORT=$(pg_lsclusters --no-header | awk '$4=="online"{print $3; exit}')
 PG_PORT="${PG_PORT:-5432}"
-if [[ ! -f /opt/pagetally/pagetally.env ]]; then
-    cat > /opt/pagetally/pagetally.env <<EOF
+if [[ ! -f "$ENV_FILE" ]]; then
+    cat > "$ENV_FILE" <<EOF
 DATABASE_URL=postgres://${PG_USER}:${PG_PASSWORD}@127.0.0.1:${PG_PORT}/${PG_DB}
 BIND_ADDR=127.0.0.1:3011
 ALLOWED_SITES=${ALLOWED_SITES}
 ADMIN_TOKEN=${ADMIN_TOKEN}
 RUST_LOG=info,sqlx=warn
 EOF
-    chown pagetally:pagetally /opt/pagetally/pagetally.env
-    chmod 600 /opt/pagetally/pagetally.env
+    chown pagetally:pagetally "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
 fi
 
 echo "==> systemd unit"
@@ -117,3 +123,9 @@ echo "  health:    curl https://${DOMAIN}/health"
 echo "  logs:      journalctl -u pagetally -f"
 echo "  redeploy:  re-run install.sh (rebuilds binary)"
 echo "=========================================="
+if [[ "${ADMIN_TOKEN_GENERATED:-0}" == "1" ]]; then
+    echo
+    echo "Generated ADMIN_TOKEN — save it now, it gates /stats/*:"
+    echo "    $ADMIN_TOKEN"
+    echo "(stored in $ENV_FILE; re-runs of install.sh will reuse it.)"
+fi

@@ -1,9 +1,9 @@
 use crate::config::EmailConfig;
-use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use serde_json::json;
 use thiserror::Error;
-use tokio::time::{timeout, error::Elapsed};
+use tokio::time::{error::Elapsed, timeout};
 
 const RESEND_API_BASE: &str = "https://api.resend.com";
 
@@ -31,7 +31,7 @@ impl Mailer {
         }
     }
 
-    fn from_header(&self, display_name: Option<&str>) -> String {
+    fn build_from_header(&self, display_name: Option<&str>) -> String {
         let name = display_name
             .map(sanitize_display_name)
             .filter(|s| !s.is_empty())
@@ -52,7 +52,7 @@ impl Mailer {
         reply_to: Option<&str>,
     ) -> Result<(), EmailError> {
         let mut payload = json!({
-            "from": self.from_header(from_display),
+            "from": self.build_from_header(from_display),
             "to": [to],
             "subject": subject,
             "html": html,
@@ -72,7 +72,7 @@ impl Mailer {
     ) -> Result<(), EmailError> {
         let (filename, bytes) = attachment;
         let mut payload = json!({
-            "from": self.from_header(from_display),
+            "from": self.build_from_header(from_display),
             "to": [to],
             "subject": subject,
             "text": body_text,
@@ -93,7 +93,7 @@ impl Mailer {
         message: &str,
     ) -> Result<(), EmailError> {
         let payload = json!({
-            "from": self.from_header(None),
+            "from": self.build_from_header(None),
             "to": [to],
             "reply_to": reply_email,
             "subject": format!("New contact form submission from {name}"),

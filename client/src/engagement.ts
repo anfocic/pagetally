@@ -7,6 +7,17 @@ export interface Engagement {
   stop(): void
 }
 
+// Tracks visible time across one page session and emits a single pageleave
+// when the page is unloaded (`pagehide`) or replaced by an SPA route change
+// (caller invokes `flush()` then `reset(newPath)`).
+//
+// Accumulates across hide/show cycles within the session — alt-tabbing away
+// and coming back does not split or drop time.
+//
+// Known limitation: iOS Safari does not always fire `pagehide` on app
+// suspension, so a tab the user backgrounds and never returns to may not
+// emit. This affects only that edge case; the common navigate-away and
+// close-tab paths fire `pagehide` reliably.
 export function startEngagement(
   send: (path: string, dur: number) => void,
 ): Engagement {
@@ -35,7 +46,10 @@ export function startEngagement(
 
   const onVisibility = () => {
     if (document.visibilityState === 'hidden') {
-      flush()
+      // Capture the just-completed visible window but do not send yet —
+      // the user may come back. We only emit on real unload (pagehide) or
+      // SPA navigation (caller-driven flush).
+      accrue()
     } else if (document.visibilityState === 'visible') {
       lastVisibleAt = now()
     }

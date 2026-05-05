@@ -9,12 +9,16 @@ async function payload(call: unknown[]): Promise<Record<string, unknown>> {
   return JSON.parse(await blob.text())
 }
 
-function fireVisibility(state: 'visible' | 'hidden') {
+function setVisibility(state: 'visible' | 'hidden') {
   Object.defineProperty(document, 'visibilityState', {
     value: state,
     configurable: true,
   })
   document.dispatchEvent(new Event('visibilitychange'))
+}
+
+function firePageHide() {
+  window.dispatchEvent(new Event('pagehide'))
 }
 
 describe('engagement (pageleave)', () => {
@@ -27,32 +31,31 @@ describe('engagement (pageleave)', () => {
     })
   })
 
-  it('sends a pageleave with positive dur on visibility=hidden', async () => {
+  it('sends pageleave on pagehide with the visible time', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
     const spy = vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
     const a = new Analytics({ endpoint: ENDPOINT, siteId: SITE_ID, autoTrack: true })
 
     vi.advanceTimersByTime(5_000)
-    fireVisibility('hidden')
+    firePageHide()
 
-    const leaves = await Promise.all(
-      spy.mock.calls
-        .map((c) => payload(c))
-        .map(async (p) => p),
-    )
-    const leave = leaves.find((p) => p.t === 'pageleave')
+    const all = await Promise.all(spy.mock.calls.map((c) => payload(c)))
+    const leave = all.find((p) => p.t === 'pageleave')
     expect(leave).toBeDefined()
     expect(leave!.dur).toBe(5000)
 
     a.stop()
   })
 
-  it('skips pageleave when dur is 0', async () => {
+  it('does not send on visibility=hidden alone (user may come back)', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
     const spy = vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
     const a = new Analytics({ endpoint: ENDPOINT, siteId: SITE_ID, autoTrack: true })
 
-    fireVisibility('hidden')
+    vi.advanceTimersByTime(5_000)
+    setVisibility('hidden')
 
     const all = await Promise.all(spy.mock.calls.map((c) => payload(c)))
     expect(all.find((p) => p.t === 'pageleave')).toBeUndefined()
@@ -60,19 +63,35 @@ describe('engagement (pageleave)', () => {
     a.stop()
   })
 
-  it('does not double-send across multiple hidden events', async () => {
+  it('accumulates across hide/show cycles and sums on pagehide', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
     const spy = vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
     const a = new Analytics({ endpoint: ENDPOINT, siteId: SITE_ID, autoTrack: true })
 
     vi.advanceTimersByTime(3_000)
-    fireVisibility('hidden')
-    fireVisibility('hidden')
+    setVisibility('hidden')
+    vi.advanceTimersByTime(10_000) // hidden — should NOT count
+    setVisibility('visible')
+    vi.advanceTimersByTime(2_000)
+    firePageHide()
 
     const all = await Promise.all(spy.mock.calls.map((c) => payload(c)))
     const leaves = all.filter((p) => p.t === 'pageleave')
     expect(leaves).toHaveLength(1)
+    expect(leaves[0]!.dur).toBe(5000)
+
+    a.stop()
+  })
+
+  it('skips pageleave when total visible time is under the minimum', async () => {
+    const spy = vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
+    const a = new Analytics({ endpoint: ENDPOINT, siteId: SITE_ID, autoTrack: true })
+
+    firePageHide()
+
+    const all = await Promise.all(spy.mock.calls.map((c) => payload(c)))
+    expect(all.find((p) => p.t === 'pageleave')).toBeUndefined()
 
     a.stop()
   })
@@ -105,7 +124,7 @@ describe('engagement (pageleave)', () => {
     const a = new Analytics({ endpoint: ENDPOINT, siteId: SITE_ID, autoTrack: true })
 
     vi.advanceTimersByTime(2 * 60 * 60 * 1000)
-    fireVisibility('hidden')
+    firePageHide()
 
     const all = await Promise.all(spy.mock.calls.map((c) => payload(c)))
     const leave = all.find((p) => p.t === 'pageleave')

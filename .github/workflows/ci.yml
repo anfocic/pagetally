@@ -6,6 +6,24 @@ on:
   pull_request:
 
 jobs:
+  lint:
+    name: lint (fmt + clippy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+      - name: cargo fmt --check
+        working-directory: server
+        run: cargo fmt --check
+      - name: cargo clippy
+        working-directory: server
+        run: cargo clippy --locked --all-targets -- -D warnings
+
   server:
     name: server (cargo test)
     runs-on: ubuntu-latest
@@ -30,19 +48,18 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: server
-      # Tip: commit server/Cargo.lock so reproducible builds use --locked here.
       - name: Build
         working-directory: server
-        run: cargo build
+        run: cargo build --locked
       - name: Test
         working-directory: server
-        run: cargo test
+        run: cargo test --locked
       - name: Verify server boots and migrations apply
         working-directory: server
         env:
           BIND_ADDR: 127.0.0.1:3001
         run: |
-          cargo run --bin pagetally-server &
+          cargo run --locked --bin pagetally-server &
           PID=$!
           for i in $(seq 1 30); do
             sleep 1
@@ -60,9 +77,8 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: client/package-lock.json
-      # Tip: commit client/package-lock.json so this can use `npm ci` instead.
       - working-directory: client
-        run: npm install --no-audit --no-fund
+        run: npm ci
       - working-directory: client
         run: npm test
       - working-directory: client

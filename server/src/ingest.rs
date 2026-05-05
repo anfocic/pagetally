@@ -1,8 +1,8 @@
 use crate::state::AppState;
 use crate::types::RawPayload;
+use axum::Json;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
-use axum::Json;
 
 pub async fn collect(
     State(state): State<AppState>,
@@ -10,10 +10,10 @@ pub async fn collect(
     Json(payload): Json<RawPayload>,
 ) -> StatusCode {
     let site_id = payload.site_id();
-    if let Some(allowed) = &state.config.allowed_sites {
-        if !allowed.iter().any(|s| s == site_id) {
-            return StatusCode::FORBIDDEN;
-        }
+    if let Some(allowed) = &state.config.allowed_sites
+        && !allowed.iter().any(|s| s == site_id)
+    {
+        return StatusCode::FORBIDDEN;
     }
 
     let country = headers
