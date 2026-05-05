@@ -31,6 +31,14 @@
     "web-vitals"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/anfocic/pagetally.git"
+  },
+  "homepage": "https://github.com/anfocic/pagetally#readme",
+  "bugs": {
+    "url": "https://github.com/anfocic/pagetally/issues"
+  },
   "devDependencies": {
     "tsup": "^8.5.1",
     "typescript": "^5.8.3",

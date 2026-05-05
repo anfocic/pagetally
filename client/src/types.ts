@@ -5,7 +5,7 @@ export interface AnalyticsConfig {
   respectDNT?: boolean
 }
 
-export type EventType = 'pageview' | 'event' | 'performance'
+export type EventType = 'pageview' | 'event' | 'performance' | 'pageleave'
 
 export type PerformanceMetrics = {
   lcp?: number
@@ -26,4 +26,5 @@ export interface Payload {
   n?: string
   pr?: Record<string, unknown>
   pf?: PerformanceMetrics
+  dur?: number
 }

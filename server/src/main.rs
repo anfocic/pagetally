@@ -11,6 +11,13 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::from_env()?;
     tracing::info!(addr = %config.bind_addr, "starting pagetally");
 
+    if config.admin_token.is_none() {
+        tracing::warn!(
+            "ADMIN_TOKEN is not set — /stats/* endpoints are publicly readable. \
+             Set ADMIN_TOKEN to require Bearer auth."
+        );
+    }
+
     let pool = db::connect(&config.database_url).await?;
     db::migrate(&pool).await?;
 

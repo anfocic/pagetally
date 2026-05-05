@@ -85,6 +85,23 @@ impl Mailer {
         self.dispatch(payload).await
     }
 
+    pub async fn send_contact(
+        &self,
+        to: &str,
+        name: &str,
+        reply_email: &str,
+        message: &str,
+    ) -> Result<(), EmailError> {
+        let payload = json!({
+            "from": self.from_header(None),
+            "to": [to],
+            "reply_to": reply_email,
+            "subject": format!("New contact form submission from {name}"),
+            "text": message,
+        });
+        self.dispatch(payload).await
+    }
+
     pub async fn verify_api_key(&self) -> Result<bool, EmailError> {
         let req = self
             .http

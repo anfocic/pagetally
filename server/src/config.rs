@@ -6,7 +6,15 @@ pub struct Config {
     pub bind_addr: String,
     pub database_url: String,
     pub allowed_sites: Option<Vec<String>>,
+    /// If set, all `/stats/*` requests must present `Authorization: Bearer <token>`.
+    /// If unset, the stats endpoints are open — fine for trusted networks but
+    /// dangerous on the public internet, so the server logs a warning at startup.
+    pub admin_token: Option<String>,
     pub email: Option<EmailConfig>,
+    /// Recipient for `POST /contact` submissions. Required for the endpoint to
+    /// accept; without it the route returns 503 so misconfigured deploys
+    /// fail loudly instead of silently dropping form submissions.
+    pub contact_to: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -37,6 +45,11 @@ impl Config {
                 .collect()
         });
 
+        let admin_token = env::var("ADMIN_TOKEN").ok().and_then(|s| {
+            let s = s.trim().to_string();
+            if s.is_empty() { None } else { Some(s) }
+        });
+
         let email = match (env::var("RESEND_API_KEY"), env::var("EMAIL_FROM")) {
             (Ok(api_key), Ok(from)) if !api_key.is_empty() && !from.is_empty() => {
                 Some(EmailConfig {
@@ -49,11 +62,18 @@ impl Config {
             _ => None,
         };
 
+        let contact_to = env::var("CONTACT_TO").ok().and_then(|s| {
+            let s = s.trim().to_string();
+            if s.is_empty() { None } else { Some(s) }
+        });
+
         Ok(Self {
             bind_addr,
             database_url,
             allowed_sites,
+            admin_token,
             email,
+            contact_to,
         })
     }
 }

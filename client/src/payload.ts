@@ -6,7 +6,7 @@ import {
   roundViewportWidth,
 } from './privacy'
 
-function getPath(): string {
+export function getPath(): string {
   return stripQueryParams(location.pathname + location.search)
 }
 
@@ -42,5 +42,14 @@ export function buildPerformancePayload(metrics: PerformanceMetrics): Omit<Paylo
     p: getPath(),
     ts: Date.now(),
     pf: metrics,
+  }
+}
+
+export function buildPageLeavePayload(path: string, dur: number): Omit<Payload, 's'> {
+  return {
+    t: 'pageleave',
+    p: stripQueryParams(path),
+    ts: Date.now(),
+    dur,
   }
 }

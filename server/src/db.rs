@@ -1,4 +1,6 @@
 use crate::types::{RawPayload, Summary, TimeseriesPoint, TopDimension, TopRow, Vitals};
+
+const PAGELEAVE_DUR_MAX_MS: i32 = 1_800_000;
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use sqlx::Row;
 use std::time::Duration;
@@ -20,50 +22,77 @@ pub async fn insert_event(
     payload: &RawPayload,
     country: Option<&str>,
 ) -> sqlx::Result<()> {
-    let (site_id, kind, path, ts, referrer, device, viewport, event_name, event_props, metrics) =
-        match payload {
-            RawPayload::Pageview { s, p, ts, r, d, v } => (
-                s.as_str(),
-                "pageview",
-                p.as_str(),
-                *ts,
-                r.as_deref(),
-                d.as_deref(),
-                *v,
-                None,
-                None,
-                None,
-            ),
-            RawPayload::Event { s, p, ts, n, pr } => (
-                s.as_str(),
-                "event",
-                p.as_str(),
-                *ts,
-                None,
-                None,
-                None,
-                Some(n.as_str()),
-                pr.as_ref().map(|m| serde_json::to_value(m).unwrap()),
-                None,
-            ),
-            RawPayload::Performance { s, p, ts, pf } => (
-                s.as_str(),
-                "performance",
-                p.as_str(),
-                *ts,
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(serde_json::to_value(pf).unwrap()),
-            ),
-        };
+    let (
+        site_id,
+        kind,
+        path,
+        ts,
+        referrer,
+        device,
+        viewport,
+        event_name,
+        event_props,
+        metrics,
+        dur_ms,
+    ) = match payload {
+        RawPayload::Pageview { s, p, ts, r, d, v } => (
+            s.as_str(),
+            "pageview",
+            p.as_str(),
+            *ts,
+            r.as_deref(),
+            d.as_deref(),
+            *v,
+            None,
+            None,
+            None,
+            None,
+        ),
+        RawPayload::Event { s, p, ts, n, pr } => (
+            s.as_str(),
+            "event",
+            p.as_str(),
+            *ts,
+            None,
+            None,
+            None,
+            Some(n.as_str()),
+            pr.as_ref().map(|m| serde_json::to_value(m).unwrap()),
+            None,
+            None,
+        ),
+        RawPayload::Performance { s, p, ts, pf } => (
+            s.as_str(),
+            "performance",
+            p.as_str(),
+            *ts,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(serde_json::to_value(pf).unwrap()),
+            None,
+        ),
+        RawPayload::Pageleave { s, p, ts, dur } => (
+            s.as_str(),
+            "pageleave",
+            p.as_str(),
+            *ts,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some((*dur).clamp(0, PAGELEAVE_DUR_MAX_MS)),
+        ),
+    };
 
     sqlx::query(
         "INSERT INTO analytics_events
-            (site_id, type, path, ts, referrer, device, viewport, event_name, event_props, metrics, country)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+            (site_id, type, path, ts, referrer, device, viewport, event_name, event_props, metrics, country, dur_ms)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
     )
     .bind(site_id)
     .bind(kind)
@@ -76,6 +105,7 @@ pub async fn insert_event(
     .bind(event_props)
     .bind(metrics)
     .bind(country)
+    .bind(dur_ms)
     .execute(pool)
     .await?;
     Ok(())
@@ -91,6 +121,7 @@ pub async fn summary(
         "SELECT
             COUNT(*) FILTER (WHERE type = 'pageview')::bigint AS pageviews,
             COUNT(*) FILTER (WHERE type = 'event')::bigint     AS events,
+            (AVG(dur_ms) FILTER (WHERE type = 'pageleave'))::float8 AS avg_time_on_page_ms,
             (
               SELECT path FROM analytics_events
                WHERE site_id = $1 AND ts BETWEEN $2 AND $3 AND type = 'pageview'
@@ -109,6 +140,10 @@ pub async fn summary(
         pageviews: row.try_get("pageviews").unwrap_or(0),
         events: row.try_get("events").unwrap_or(0),
         top_path: row.try_get::<Option<String>, _>("top_path").ok().flatten(),
+        avg_time_on_page_ms: row
+            .try_get::<Option<f64>, _>("avg_time_on_page_ms")
+            .ok()
+            .flatten(),
     })
 }
 
@@ -150,6 +185,41 @@ pub async fn top(
     dim: TopDimension,
     limit: i64,
 ) -> sqlx::Result<Vec<TopRow>> {
+    if matches!(dim, TopDimension::Path) {
+        let rows = sqlx::query(
+            "SELECT path AS key,
+                    COUNT(*) FILTER (WHERE type = 'pageview')::bigint AS count,
+                    (AVG(dur_ms) FILTER (WHERE type = 'pageleave'))::float8 AS avg_dur_ms
+             FROM analytics_events
+             WHERE site_id = $1 AND ts BETWEEN $2 AND $3
+                   AND type IN ('pageview', 'pageleave')
+                   AND path IS NOT NULL
+             GROUP BY path
+             HAVING COUNT(*) FILTER (WHERE type = 'pageview') > 0
+             ORDER BY count DESC
+             LIMIT $4",
+        )
+        .bind(site_id)
+        .bind(from_ts)
+        .bind(to_ts)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
+
+        return Ok(rows
+            .into_iter()
+            .map(|r| TopRow {
+                key: r
+                    .try_get::<Option<String>, _>("key")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| "(none)".into()),
+                count: r.try_get("count").unwrap_or(0),
+                avg_dur_ms: r.try_get::<Option<f64>, _>("avg_dur_ms").ok().flatten(),
+            })
+            .collect());
+    }
+
     let col = dim.column();
     let rows = sqlx::query(&format!(
         "SELECT {col} AS key, COUNT(*)::bigint AS count
@@ -174,6 +244,7 @@ pub async fn top(
                 .flatten()
                 .unwrap_or_else(|| "(none)".into()),
             count: r.try_get("count").unwrap_or(0),
+            avg_dur_ms: None,
         })
         .collect())
 }

@@ -32,6 +32,13 @@ pub enum RawPayload {
         ts: i64,
         pf: PerformanceMetrics,
     },
+    #[serde(rename = "pageleave")]
+    Pageleave {
+        s: String,
+        p: String,
+        ts: i64,
+        dur: i32,
+    },
 }
 
 impl RawPayload {
@@ -39,7 +46,8 @@ impl RawPayload {
         match self {
             RawPayload::Pageview { s, .. }
             | RawPayload::Event { s, .. }
-            | RawPayload::Performance { s, .. } => s,
+            | RawPayload::Performance { s, .. }
+            | RawPayload::Pageleave { s, .. } => s,
         }
     }
 
@@ -48,6 +56,7 @@ impl RawPayload {
             RawPayload::Pageview { .. } => "pageview",
             RawPayload::Event { .. } => "event",
             RawPayload::Performance { .. } => "performance",
+            RawPayload::Pageleave { .. } => "pageleave",
         }
     }
 }
@@ -71,6 +80,8 @@ pub struct Summary {
     pub pageviews: i64,
     pub events: i64,
     pub top_path: Option<String>,
+    #[serde(rename = "avgTimeOnPageMs", skip_serializing_if = "Option::is_none")]
+    pub avg_time_on_page_ms: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -83,6 +94,8 @@ pub struct TimeseriesPoint {
 pub struct TopRow {
     pub key: String,
     pub count: i64,
+    #[serde(rename = "avgDurMs", skip_serializing_if = "Option::is_none")]
+    pub avg_dur_ms: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]

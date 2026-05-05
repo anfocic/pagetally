@@ -10,3 +10,11 @@ target
 .vscode
 .wrangler
 .astro
+
+# operator-local one-shot scripts (not part of the published deploy bundle)
+deploy/fix.sh
+deploy/fix-port.sh
+deploy/fix-pg-port.sh
+deploy/fix_email_from_name.sh
+deploy/redeploy.sh
+deploy/reset-pg-password.sh

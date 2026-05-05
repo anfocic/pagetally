@@ -14,17 +14,14 @@ GDPR-compliant, cookie-free web analytics. Browser client + self-hostable Rust s
 ### 1. Run the server
 
 ```bash
-docker run -e DATABASE_URL=postgres://... -p 3001:3001 pagetally/server
+DATABASE_URL=postgres://... \
+ADMIN_TOKEN=$(openssl rand -hex 24) \
+cargo run --release
 ```
 
-Or build from source:
+Migrations run automatically on startup. **Do not run without `ADMIN_TOKEN`** unless the host is on a trusted network — `/stats/*` is open by default and the server logs a warning.
 
-```bash
-cd server
-DATABASE_URL=postgres://... cargo run --release
-```
-
-Migrations run automatically on startup.
+For a one-shot install on a fresh Debian/Ubuntu VM, see [`deploy/install.sh`](deploy/install.sh).
 
 ### 2. Embed the client
 
@@ -44,12 +41,25 @@ new Analytics({
 
 ### 3. Read stats
 
+All `/stats/*` endpoints require `Authorization: Bearer $ADMIN_TOKEN` when the server has `ADMIN_TOKEN` set.
+
 ```
 GET /stats/summary?site=my-site&days=30
 GET /stats/timeseries?site=my-site&days=30&bucket=day
 GET /stats/top?site=my-site&dim=path&limit=10
 GET /stats/vitals?site=my-site&days=30
 ```
+
+`top?dim=path` returns `avgDurMs` per path. `summary` returns `avgTimeOnPageMs`.
+
+## What gets collected
+
+- Pageviews (path, referrer domain, device class, viewport bucket, country)
+- Custom events (name + optional props)
+- Web vitals (LCP, FCP, CLS, INP, TTFB)
+- **Time on page** — visible duration only. The client never measures while the tab is hidden, and stops at 30 minutes per page.
+
+No cookies, no fingerprinting, no IP storage. The browser client is ~5 KB.
 
 ## Configuration
 
@@ -59,10 +69,16 @@ Server env vars:
 |---|---|---|
 | `DATABASE_URL` | yes | — |
 | `BIND_ADDR` | no | `0.0.0.0:3001` |
+| `ADMIN_TOKEN` | recommended | unset (stats are public) |
 | `ALLOWED_SITES` | no | unrestricted |
 | `RESEND_API_KEY` | no | (disables email) |
 | `EMAIL_FROM` | no | — |
 | `EMAIL_FROM_NAME` | no | `pagetally` |
+| `CONTACT_TO` | no | (disables `/contact`) |
+
+## Security
+
+If you find a vulnerability, please report it privately — see [`SECURITY.md`](SECURITY.md). Do not open a public issue.
 
 ## License
 

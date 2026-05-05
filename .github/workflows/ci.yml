@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  server:
+    name: server (cargo test)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: pagetally_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/pagetally_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+      # Tip: commit server/Cargo.lock so reproducible builds use --locked here.
+      - name: Build
+        working-directory: server
+        run: cargo build
+      - name: Test
+        working-directory: server
+        run: cargo test
+      - name: Verify server boots and migrations apply
+        working-directory: server
+        env:
+          BIND_ADDR: 127.0.0.1:3001
+        run: |
+          cargo run --bin pagetally-server &
+          PID=$!
+          for i in $(seq 1 30); do
+            sleep 1
+            curl -fsS http://127.0.0.1:3001/health && break
+          done
+          kill $PID
+
+  client:
+    name: client (vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      # Tip: commit client/package-lock.json so this can use `npm ci` instead.
+      - working-directory: client
+        run: npm install --no-audit --no-fund
+      - working-directory: client
+        run: npm test
+      - working-directory: client
+        run: npm run build

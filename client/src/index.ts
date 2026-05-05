@@ -5,9 +5,12 @@ import {
   buildPageViewPayload,
   buildEventPayload,
   buildPerformancePayload,
+  buildPageLeavePayload,
+  getPath,
 } from './payload'
 import { startAutoTracking } from './collect'
 import { startPerformanceTracking } from './performance'
+import { startEngagement, type Engagement } from './engagement'
 
 export type { AnalyticsConfig, Payload, PerformanceMetrics } from './types'
 
@@ -15,6 +18,7 @@ export class Analytics {
   private config: Required<AnalyticsConfig>
   private cleanups: (() => void)[] = []
   private stopped = false
+  private engagement: Engagement | null = null
 
   constructor(config: AnalyticsConfig) {
     if (!config.endpoint) {
@@ -49,9 +53,20 @@ export class Analytics {
   }
 
   private _startAutoTracking(): void {
-    const send = () => this._send(buildPageViewPayload())
-    this.cleanups.push(startAutoTracking(send))
-    send()
+    const eng = startEngagement((path, dur) => {
+      this._send(buildPageLeavePayload(path, dur))
+    })
+    this.engagement = eng
+    this.cleanups.push(() => eng.stop())
+
+    const fireView = (path?: string) => {
+      eng.flush()
+      const next = path ?? getPath()
+      this._send(buildPageViewPayload(next))
+      eng.reset(next)
+    }
+    this.cleanups.push(startAutoTracking(() => fireView()))
+    fireView()
   }
 
   private _startPerformanceTracking(): void {
@@ -70,15 +85,20 @@ export class Analytics {
   /** Manually track a page view. */
   page(path?: string): void {
     if (this.stopped) return
-    this._send(buildPageViewPayload(path))
+    this.engagement?.flush()
+    const next = path ?? getPath()
+    this._send(buildPageViewPayload(next))
+    this.engagement?.reset(next)
   }
 
   /** Stop all tracking and clean up observers. */
   stop(): void {
+    this.engagement?.flush()
     this.stopped = true
     for (const cleanup of this.cleanups) {
       cleanup()
     }
     this.cleanups = []
+    this.engagement = null
   }
 }

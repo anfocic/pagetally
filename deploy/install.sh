@@ -27,9 +27,16 @@ fi
 : "${ACME_EMAIL:?ACME_EMAIL env var required}"
 : "${PG_PASSWORD:?PG_PASSWORD env var required}"
 
-ALLOWED_SITES="${ALLOWED_SITES:-intrebit}"
+ALLOWED_SITES="${ALLOWED_SITES:-}"
+ADMIN_TOKEN="${ADMIN_TOKEN:-}"
 PG_DB="${PG_DB:-pagetally}"
 PG_USER="${PG_USER:-pagetally}"
+
+if [[ -z "$ADMIN_TOKEN" ]]; then
+    ADMIN_TOKEN="$(openssl rand -hex 24)"
+    echo "==> generated ADMIN_TOKEN (save this — it gates /stats/*):"
+    echo "    $ADMIN_TOKEN"
+fi
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVER_DIR="$REPO_DIR/server"
@@ -77,11 +84,14 @@ cp -r "$SERVER_DIR/migrations" /opt/pagetally/migrations
 chown -R pagetally:pagetally /opt/pagetally/migrations
 
 echo "==> env file"
+PG_PORT=$(pg_lsclusters --no-header | awk '$4=="online"{print $3; exit}')
+PG_PORT="${PG_PORT:-5432}"
 if [[ ! -f /opt/pagetally/pagetally.env ]]; then
     cat > /opt/pagetally/pagetally.env <<EOF
-DATABASE_URL=postgres://${PG_USER}:${PG_PASSWORD}@127.0.0.1:5432/${PG_DB}
-BIND_ADDR=127.0.0.1:3001
+DATABASE_URL=postgres://${PG_USER}:${PG_PASSWORD}@127.0.0.1:${PG_PORT}/${PG_DB}
+BIND_ADDR=127.0.0.1:3011
 ALLOWED_SITES=${ALLOWED_SITES}
+ADMIN_TOKEN=${ADMIN_TOKEN}
 RUST_LOG=info,sqlx=warn
 EOF
     chown pagetally:pagetally /opt/pagetally/pagetally.env
