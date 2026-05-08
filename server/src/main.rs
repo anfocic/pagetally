@@ -1,4 +1,4 @@
-use pagetally_server::{config::Config, db, email::Mailer, router, state::AppState};
+use pagetally_server::{config::Config, db, email::Mailer, router_with_metrics, state::AppState};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::signal;
@@ -45,7 +45,7 @@ async fn main() -> anyhow::Result<()> {
         mailer,
     };
 
-    let app = router(state);
+    let app = router_with_metrics(state);
 
     let listener = tokio::net::TcpListener::bind(&config.bind_addr).await?;
     axum::serve(

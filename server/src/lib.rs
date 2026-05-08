@@ -12,6 +12,7 @@ use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::routing::{get, post};
+use axum_prometheus::PrometheusMetricLayer;
 use state::AppState;
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,6 +24,22 @@ use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
 use tracing::Level;
+
+/// Build the application router with HTTP metrics + a `/metrics` endpoint.
+/// This installs a process-wide Prometheus recorder, so it can only be called
+/// once. `router()` (without metrics) is the entry point for tests and
+/// fixtures that may run in parallel.
+pub fn router_with_metrics(state: AppState) -> Router {
+    let (metrics_layer, metrics_handle) = PrometheusMetricLayer::pair();
+    let metrics_route = Router::new().route(
+        "/metrics",
+        get(move || {
+            let handle = metrics_handle.clone();
+            async move { handle.render() }
+        }),
+    );
+    router(state).merge(metrics_route).layer(metrics_layer)
+}
 
 pub fn router(state: AppState) -> Router {
     let cors_collect = CorsLayer::new()

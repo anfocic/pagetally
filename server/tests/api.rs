@@ -3,7 +3,7 @@ use axum::http::{Request, StatusCode, header};
 use http_body_util::BodyExt;
 use pagetally_server::{
     config::Config,
-    router,
+    router, router_with_metrics,
     state::AppState,
 };
 use serde_json::{Value, json};
@@ -279,6 +279,30 @@ async fn request_id_is_propagated_when_client_sends_one(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(resp.headers().get("x-request-id").unwrap(), "abc-123-test");
+}
+
+#[sqlx::test]
+async fn metrics_endpoint_returns_prometheus_text(pool: PgPool) {
+    // router_with_metrics installs a process-global Prometheus recorder, so
+    // this is the only test that may exercise it. Other tests use the bare
+    // router() to stay parallel-safe.
+    let app = router_with_metrics(test_state(pool, None, None));
+
+    // Generate a request so at least one counter exists.
+    let _ = app
+        .clone()
+        .oneshot(Request::get("/health").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    let resp = app
+        .oneshot(Request::get("/metrics").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let text = std::str::from_utf8(&body).unwrap();
+    assert!(text.contains("axum_http_requests_total"), "body: {text}");
 }
 
 #[sqlx::test]

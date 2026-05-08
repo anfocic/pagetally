@@ -99,6 +99,19 @@ The library doesn't fingerprint or store IPs, but two channels can still leak PI
 - **URL paths.** `pagetally` strips `?query` and `#hash` but not path segments. A path like `/users/jane@example.com/orders/42` will be stored verbatim. Strip or hash sensitive segments client-side before navigating, or pass a sanitized path to `analytics.page(path)`.
 - **Custom event props.** `analytics.track(name, props)` stores `props` as-is. Don't pass emails, names, or tokens. Use a stable `userId` hash if you need correlation.
 
+## Metrics
+
+`GET /metrics` exposes Prometheus-format metrics for HTTP traffic (request rate, latency histograms, status codes per route). Scrape it with Prometheus / Grafana Agent / Vector.
+
+The endpoint is **unauthenticated** — keep it on an internal interface or block external access at your reverse proxy. Standard practice for `/metrics` everywhere; pagetally follows the convention.
+
+```
+# HELP axum_http_requests_total Total HTTP requests.
+# TYPE axum_http_requests_total counter
+axum_http_requests_total{method="GET",path="/health",status="200"} 1
+...
+```
+
 ## Load testing
 
 A small wrapper around [`oha`](https://github.com/hatoo/oha) lives at [`scripts/loadtest.sh`](scripts/loadtest.sh):
