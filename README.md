@@ -75,6 +75,8 @@ Server env vars:
 | `EMAIL_FROM` | no | — |
 | `EMAIL_FROM_NAME` | no | `pagetally` |
 | `CONTACT_TO` | no | (disables `/contact`) |
+| `STATS_ORIGINS` | no | `*` (any origin) |
+| `BEHIND_TLS` | no | `false` (disables HSTS) |
 
 ## Operator hardening (self-host checklist)
 
@@ -82,7 +84,9 @@ The defaults are safe for a private deploy. For a public-internet host:
 
 - **Set `ADMIN_TOKEN`.** Without it `/stats/*` is open. The server logs a warning at startup if unset.
 - **Set `ALLOWED_SITES`** if you only collect for known sites — otherwise any caller can write any `siteId` and bloat your DB.
-- **Rate-limit `/collect` and `/contact`** at your reverse proxy (Caddy/nginx). The server has no built-in limiter.
+- **Set `STATS_ORIGINS`** to your dashboard origin so a browser elsewhere can't read `/stats/*` responses even if the admin token leaks.
+- **Set `BEHIND_TLS=1`** once the deploy is fronted by HTTPS so the server emits `Strict-Transport-Security`. The other security headers (`X-Content-Type-Options`, `Referrer-Policy`, `X-Frame-Options`) ship unconditionally.
+- **Rate limiting** is built in (per-IP, in-process): `/collect` allows ~120/min burst 60, `/contact` allows ~5/min burst 3. The server reads the client IP from `x-forwarded-for` / `x-real-ip` (with the TCP peer as fallback), so make sure your reverse proxy sets one of those. For a hostile public deploy, layer additional limits at Caddy/nginx.
 - **Strip the `x-country` header at the proxy** before re-injecting it from a GeoIP lookup — the server trusts whatever the client sends if no proxy strips it.
 - **Watch your access logs.** The `/collect` body never stores IPs, but your reverse proxy and `tower-http` request traces likely log the client IP. Configure log retention / redaction to match your privacy posture.
 

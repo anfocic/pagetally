@@ -15,6 +15,14 @@ pub struct Config {
     /// accept; without it the route returns 503 so misconfigured deploys
     /// fail loudly instead of silently dropping form submissions.
     pub contact_to: Option<String>,
+    /// Allowed `Origin` values for `/stats/*`. Empty/unset = `*`. Set this
+    /// to your dashboard origin (e.g. `https://stats.example.com`) so a
+    /// browser on any other origin can't read stats responses even if the
+    /// admin token leaks into URL bar / page source.
+    pub stats_origins: Option<Vec<String>>,
+    /// `true` if the server is fronted by HTTPS (so HSTS is safe to send).
+    /// The header is harmless on plain HTTP but pointless. Default false.
+    pub behind_tls: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -67,6 +75,18 @@ impl Config {
             if s.is_empty() { None } else { Some(s) }
         });
 
+        let stats_origins = env::var("STATS_ORIGINS").ok().map(|s| {
+            s.split(',')
+                .map(|x| x.trim().to_string())
+                .filter(|x| !x.is_empty())
+                .collect()
+        });
+
+        let behind_tls = env::var("BEHIND_TLS")
+            .ok()
+            .map(|s| matches!(s.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+            .unwrap_or(false);
+
         Ok(Self {
             bind_addr,
             database_url,
@@ -74,6 +94,8 @@ impl Config {
             admin_token,
             email,
             contact_to,
+            stats_origins,
+            behind_tls,
         })
     }
 }
