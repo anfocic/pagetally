@@ -18,9 +18,11 @@ use std::time::Duration;
 use tower_governor::key_extractor::SmartIpKeyExtractor;
 use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::timeout::TimeoutLayer;
-use tower_http::trace::TraceLayer;
+use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
+use tracing::Level;
 
 pub fn router(state: AppState) -> Router {
     let cors_collect = CorsLayer::new()
@@ -102,7 +104,9 @@ pub fn router(state: AppState) -> Router {
         .with_state(state.clone());
 
     // Security response headers (defense in depth — most are also useful when
-    // clients embed our endpoints in their own pages).
+    // clients embed our endpoints in their own pages). CSP `default-src 'none'`
+    // is appropriate because every response is JSON or plain text — nothing
+    // we serve should ever load subresources or execute script.
     app = app
         .layer(SetResponseHeaderLayer::if_not_present(
             HeaderName::from_static("x-content-type-options"),
@@ -115,6 +119,10 @@ pub fn router(state: AppState) -> Router {
         .layer(SetResponseHeaderLayer::if_not_present(
             HeaderName::from_static("x-frame-options"),
             HeaderValue::from_static("DENY"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            HeaderName::from_static("content-security-policy"),
+            HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'"),
         ));
 
     if state.config.behind_tls {
@@ -124,8 +132,20 @@ pub fn router(state: AppState) -> Router {
         ));
     }
 
+    let x_request_id = HeaderName::from_static("x-request-id");
+
     app.layer(TimeoutLayer::new(Duration::from_secs(15)))
-        .layer(TraceLayer::new_for_http())
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(
+                    DefaultMakeSpan::new()
+                        .level(Level::INFO)
+                        .include_headers(false),
+                )
+                .on_response(DefaultOnResponse::new().level(Level::INFO)),
+        )
+        .layer(PropagateRequestIdLayer::new(x_request_id.clone()))
+        .layer(SetRequestIdLayer::new(x_request_id, MakeRequestUuid))
 }
 
 async fn require_admin(
