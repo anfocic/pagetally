@@ -41,7 +41,58 @@ pub enum RawPayload {
     },
 }
 
+pub const MAX_SITE_ID: usize = 64;
+pub const MAX_PATH: usize = 2048;
+pub const MAX_REFERRER: usize = 253;
+pub const MAX_EVENT_NAME: usize = 64;
+
 impl RawPayload {
+    /// Validate user-supplied lengths and float sanity. Body size is already
+    /// capped at the router layer; this adds per-field caps so a single 16KB
+    /// payload can't stuff one giant value into an indexed column.
+    pub fn validate(&mut self) -> Result<(), &'static str> {
+        let s = self.site_id();
+        if s.is_empty() || s.len() > MAX_SITE_ID {
+            return Err("invalid site_id");
+        }
+        let path = match self {
+            RawPayload::Pageview { p, .. }
+            | RawPayload::Pageleave { p, .. }
+            | RawPayload::Performance { p, .. }
+            | RawPayload::Event { p, .. } => p.as_str(),
+        };
+        if path.is_empty() || path.len() > MAX_PATH {
+            return Err("invalid path");
+        }
+        if let RawPayload::Pageview { r: Some(r), .. } = self
+            && r.len() > MAX_REFERRER
+        {
+            return Err("invalid referrer");
+        }
+        if let RawPayload::Event { n, .. } = self
+            && (n.is_empty() || n.len() > MAX_EVENT_NAME)
+        {
+            return Err("invalid event name");
+        }
+        if let RawPayload::Performance { pf, .. } = self {
+            // Postgres percentile_cont chokes on NaN; drop non-finite values.
+            for v in [
+                &mut pf.lcp,
+                &mut pf.fcp,
+                &mut pf.cls,
+                &mut pf.inp,
+                &mut pf.ttfb,
+            ] {
+                if let Some(x) = *v
+                    && !x.is_finite()
+                {
+                    *v = None;
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn site_id(&self) -> &str {
         match self {
             RawPayload::Pageview { s, .. }
@@ -57,6 +108,105 @@ impl RawPayload {
             RawPayload::Event { .. } => "event",
             RawPayload::Performance { .. } => "performance",
             RawPayload::Pageleave { .. } => "pageleave",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pv(s: &str, p: &str) -> RawPayload {
+        RawPayload::Pageview {
+            s: s.into(),
+            p: p.into(),
+            ts: 0,
+            r: None,
+            d: None,
+            v: None,
+        }
+    }
+
+    #[test]
+    fn rejects_empty_site() {
+        assert!(pv("", "/").validate().is_err());
+    }
+
+    #[test]
+    fn rejects_oversize_site() {
+        assert!(pv(&"x".repeat(MAX_SITE_ID + 1), "/").validate().is_err());
+    }
+
+    #[test]
+    fn rejects_empty_path() {
+        assert!(pv("s", "").validate().is_err());
+    }
+
+    #[test]
+    fn rejects_oversize_path() {
+        assert!(pv("s", &"a".repeat(MAX_PATH + 1)).validate().is_err());
+    }
+
+    #[test]
+    fn accepts_normal_pageview() {
+        assert!(pv("site-1", "/about").validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_oversize_referrer() {
+        let mut p = pv("s", "/");
+        if let RawPayload::Pageview { r, .. } = &mut p {
+            *r = Some("a".repeat(MAX_REFERRER + 1));
+        }
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_empty_event_name() {
+        let mut p = RawPayload::Event {
+            s: "s".into(),
+            p: "/".into(),
+            ts: 0,
+            n: "".into(),
+            pr: None,
+        };
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_oversize_event_name() {
+        let mut p = RawPayload::Event {
+            s: "s".into(),
+            p: "/".into(),
+            ts: 0,
+            n: "n".repeat(MAX_EVENT_NAME + 1),
+            pr: None,
+        };
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn drops_non_finite_metrics() {
+        let mut p = RawPayload::Performance {
+            s: "s".into(),
+            p: "/".into(),
+            ts: 0,
+            pf: PerformanceMetrics {
+                lcp: Some(f64::NAN),
+                fcp: Some(f64::INFINITY),
+                cls: Some(0.1),
+                inp: Some(f64::NEG_INFINITY),
+                ttfb: None,
+            },
+        };
+        p.validate().unwrap();
+        if let RawPayload::Performance { pf, .. } = p {
+            assert!(pf.lcp.is_none());
+            assert!(pf.fcp.is_none());
+            assert_eq!(pf.cls, Some(0.1));
+            assert!(pf.inp.is_none());
+        } else {
+            panic!()
         }
     }
 }
