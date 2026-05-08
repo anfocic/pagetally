@@ -77,6 +77,8 @@ Server env vars:
 | `CONTACT_TO` | no | (disables `/contact`) |
 | `STATS_ORIGINS` | no | `*` (any origin) |
 | `BEHIND_TLS` | no | `false` (disables HSTS) |
+| `LOG_FORMAT` | no | `text` (set `json` for structured logs) |
+| `RUST_LOG` | no | `info,sqlx=warn` |
 
 ## Operator hardening (self-host checklist)
 
@@ -96,6 +98,26 @@ The library doesn't fingerprint or store IPs, but two channels can still leak PI
 
 - **URL paths.** `pagetally` strips `?query` and `#hash` but not path segments. A path like `/users/jane@example.com/orders/42` will be stored verbatim. Strip or hash sensitive segments client-side before navigating, or pass a sanitized path to `analytics.page(path)`.
 - **Custom event props.** `analytics.track(name, props)` stores `props` as-is. Don't pass emails, names, or tokens. Use a stable `userId` hash if you need correlation.
+
+## Load testing
+
+A small wrapper around [`oha`](https://github.com/hatoo/oha) lives at [`scripts/loadtest.sh`](scripts/loadtest.sh):
+
+```bash
+brew install oha
+BASE=http://127.0.0.1:3001 ./scripts/loadtest.sh collect-burst    # single-IP abuse
+BASE=http://127.0.0.1:3001 ./scripts/loadtest.sh collect-spread   # parallel IPs
+BASE=http://127.0.0.1:3001 ./scripts/loadtest.sh stats-read       # read path
+```
+
+Reference numbers from a release build on an M-class laptop, single Postgres on the same box:
+
+| Scenario | Throughput | p99 | Notes |
+|---|---|---|---|
+| `/collect` from one IP | ~71k rps | <3 ms | Rate-limit returns 429 after the burst is exhausted, server stays responsive |
+| `/stats/summary` reads | ~20k rps | ~5 ms | Hits Postgres on every request |
+
+Treat these as smoke-test floors, not throughput guarantees — production numbers depend on disk, Postgres tuning, and the size of the `analytics_events` table.
 
 ## Security
 
