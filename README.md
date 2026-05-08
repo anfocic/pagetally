@@ -76,6 +76,23 @@ Server env vars:
 | `EMAIL_FROM_NAME` | no | `pagetally` |
 | `CONTACT_TO` | no | (disables `/contact`) |
 
+## Operator hardening (self-host checklist)
+
+The defaults are safe for a private deploy. For a public-internet host:
+
+- **Set `ADMIN_TOKEN`.** Without it `/stats/*` is open. The server logs a warning at startup if unset.
+- **Set `ALLOWED_SITES`** if you only collect for known sites — otherwise any caller can write any `siteId` and bloat your DB.
+- **Rate-limit `/collect` and `/contact`** at your reverse proxy (Caddy/nginx). The server has no built-in limiter.
+- **Strip the `x-country` header at the proxy** before re-injecting it from a GeoIP lookup — the server trusts whatever the client sends if no proxy strips it.
+- **Watch your access logs.** The `/collect` body never stores IPs, but your reverse proxy and `tower-http` request traces likely log the client IP. Configure log retention / redaction to match your privacy posture.
+
+## Privacy notes (for SDK consumers)
+
+The library doesn't fingerprint or store IPs, but two channels can still leak PII if you're not careful:
+
+- **URL paths.** `pagetally` strips `?query` and `#hash` but not path segments. A path like `/users/jane@example.com/orders/42` will be stored verbatim. Strip or hash sensitive segments client-side before navigating, or pass a sanitized path to `analytics.page(path)`.
+- **Custom event props.** `analytics.track(name, props)` stores `props` as-is. Don't pass emails, names, or tokens. Use a stable `userId` hash if you need correlation.
+
 ## Security
 
 If you find a vulnerability, please report it privately — see [`SECURITY.md`](SECURITY.md). Do not open a public issue.

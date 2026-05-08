@@ -16,10 +16,12 @@ export function startAutoTracking(onPageView: () => void): () => void {
   history.replaceState = patch(replaceState)
 
   window.addEventListener('popstate', onPageView)
+  window.addEventListener('hashchange', onPageView)
 
   return () => {
     history.pushState = pushState
     history.replaceState = replaceState
     window.removeEventListener('popstate', onPageView)
+    window.removeEventListener('hashchange', onPageView)
   }
 }
