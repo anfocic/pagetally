@@ -166,6 +166,58 @@ describe('Analytics', () => {
     })
   })
 
+  describe('duplicate-instance guard', () => {
+    it('disables a second instance and warns', () => {
+      const spy = vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      const a = new Analytics({ endpoint: ENDPOINT, siteId: SITE_ID, autoTrack: false })
+      const b = new Analytics({ endpoint: ENDPOINT, siteId: SITE_ID, autoTrack: false })
+
+      expect(warn).toHaveBeenCalled()
+
+      a.track('one')
+      b.track('two')
+      expect(spy).toHaveBeenCalledTimes(1)
+
+      a.stop()
+      b.stop()
+    })
+
+    it('frees the slot after stop so a fresh instance can run', () => {
+      const spy = vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
+      const a = new Analytics({ endpoint: ENDPOINT, siteId: SITE_ID, autoTrack: false })
+      a.stop()
+
+      const b = new Analytics({ endpoint: ENDPOINT, siteId: SITE_ID, autoTrack: false })
+      b.track('after-rotate')
+      expect(spy).toHaveBeenCalledTimes(1)
+      b.stop()
+    })
+  })
+
+  describe('prerender', () => {
+    it('defers initial pageview until prerenderingchange fires', () => {
+      const spy = vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
+      Object.defineProperty(document, 'prerendering', {
+        value: true,
+        configurable: true,
+      })
+
+      const a = new Analytics({ endpoint: ENDPOINT, siteId: SITE_ID, autoTrack: true })
+      expect(spy).not.toHaveBeenCalled()
+
+      Object.defineProperty(document, 'prerendering', {
+        value: false,
+        configurable: true,
+      })
+      document.dispatchEvent(new Event('prerenderingchange'))
+
+      expect(spy).toHaveBeenCalledTimes(1)
+      a.stop()
+    })
+  })
+
   describe('stop()', () => {
     it('cleans up and prevents further tracking', () => {
       const spy = vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)

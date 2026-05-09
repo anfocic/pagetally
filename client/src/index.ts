@@ -14,11 +14,15 @@ import { startEngagement, type Engagement } from './engagement'
 
 export type { AnalyticsConfig, Payload, PerformanceMetrics } from './types'
 
+const INSTANCE_KEY = '__pagetally_active__'
+
 export class Analytics {
   private config: Required<AnalyticsConfig>
   private cleanups: (() => void)[] = []
   private stopped = false
   private engagement: Engagement | null = null
+  private lastViewPath = ''
+  private lastViewTime = 0
 
   constructor(config: AnalyticsConfig) {
     if (!config.endpoint) {
@@ -40,6 +44,24 @@ export class Analytics {
       return
     }
 
+    // Guard against duplicate instances on the same page (snippet pasted twice,
+    // SPA bundle re-evaluated on hot reload, etc). Doubling counts is a common
+    // and hard-to-debug source of inflated metrics.
+    const w = globalThis as Record<string, unknown>
+    if (w[INSTANCE_KEY]) {
+      if (typeof console !== 'undefined') {
+        console.warn(
+          'pagetally: an Analytics instance is already running on this page; new instance disabled',
+        )
+      }
+      this.stopped = true
+      return
+    }
+    w[INSTANCE_KEY] = true
+    this.cleanups.push(() => {
+      delete w[INSTANCE_KEY]
+    })
+
     if (this.config.autoTrack) {
       this._startAutoTracking()
     }
@@ -60,8 +82,12 @@ export class Analytics {
     this.cleanups.push(() => eng.stop())
 
     const fireView = (path?: string) => {
-      eng.flush()
       const next = path ?? getPath()
+      const now = Date.now()
+      if (next === this.lastViewPath && now - this.lastViewTime < 500) return
+      this.lastViewPath = next
+      this.lastViewTime = now
+      eng.flush()
       this._send(buildPageViewPayload(next))
       eng.reset(next)
     }
@@ -73,7 +99,23 @@ export class Analytics {
     window.addEventListener('pageshow', onPageShow)
     this.cleanups.push(() => window.removeEventListener('pageshow', onPageShow))
 
-    fireView()
+    // Speculation-rules / Chromium prerender loads the page invisibly. Firing
+    // a pageview during prerender double-counts whenever the user never lands
+    // on the prerendered URL. Defer the initial view until activation.
+    const prerendering =
+      (document as Document & { prerendering?: boolean }).prerendering === true
+    if (prerendering) {
+      const onActivate = () => {
+        document.removeEventListener('prerenderingchange', onActivate)
+        fireView()
+      }
+      document.addEventListener('prerenderingchange', onActivate)
+      this.cleanups.push(() =>
+        document.removeEventListener('prerenderingchange', onActivate),
+      )
+    } else {
+      fireView()
+    }
   }
 
   private _startPerformanceTracking(): void {
