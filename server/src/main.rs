@@ -6,8 +6,7 @@ use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let env_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| "info,sqlx=warn".into());
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| "info,sqlx=warn".into());
     let json_logs = std::env::var("LOG_FORMAT")
         .map(|s| s.eq_ignore_ascii_case("json"))
         .unwrap_or(false);
@@ -19,9 +18,7 @@ async fn main() -> anyhow::Result<()> {
             .with_span_list(false)
             .init();
     } else {
-        tracing_subscriber::fmt()
-            .with_env_filter(env_filter)
-            .init();
+        tracing_subscriber::fmt().with_env_filter(env_filter).init();
     }
 
     let config = Config::from_env()?;
