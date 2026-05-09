@@ -1,11 +1,7 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use http_body_util::BodyExt;
-use pagetally_server::{
-    config::Config,
-    router, router_with_metrics,
-    state::AppState,
-};
+use pagetally_server::{config::Config, router, router_with_metrics, state::AppState};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -90,22 +86,17 @@ async fn collect_inserts_pageview(pool: PgPool) {
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
     wait_for_count(&pool, 1).await;
 
-    let row: (String, String, String) = sqlx::query_as(
-        "SELECT site_id, type, path FROM analytics_events LIMIT 1",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let row: (String, String, String) =
+        sqlx::query_as("SELECT site_id, type, path FROM analytics_events LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(row, ("site-1".into(), "pageview".into(), "/about".into()));
 }
 
 #[sqlx::test]
 async fn collect_rejects_unknown_site_when_allowlisted(pool: PgPool) {
-    let app = router(test_state(
-        pool.clone(),
-        None,
-        Some(vec!["site-a".into()]),
-    ));
+    let app = router(test_state(pool.clone(), None, Some(vec!["site-a".into()])));
     let resp = app
         .oneshot(post_collect(json!({
             "t": "pageview",
@@ -155,8 +146,7 @@ async fn collect_rejects_oversize_body(pool: PgPool) {
         .await
         .unwrap();
     assert!(
-        resp.status() == StatusCode::PAYLOAD_TOO_LARGE
-            || resp.status() == StatusCode::BAD_REQUEST,
+        resp.status() == StatusCode::PAYLOAD_TOO_LARGE || resp.status() == StatusCode::BAD_REQUEST,
         "got {}",
         resp.status()
     );
@@ -320,11 +310,10 @@ async fn pageleave_dur_is_clamped(pool: PgPool) {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
     wait_for_count(&pool, 1).await;
-    let dur: i32 = sqlx::query_scalar(
-        "SELECT dur_ms FROM analytics_events WHERE type = 'pageleave' LIMIT 1",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let dur: i32 =
+        sqlx::query_scalar("SELECT dur_ms FROM analytics_events WHERE type = 'pageleave' LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(dur, 1_800_000);
 }
