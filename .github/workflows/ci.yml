@@ -67,6 +67,25 @@ jobs:
           done
           kill $PID
 
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+          shared-key: audit
+      - name: install cargo-audit
+        run: cargo install --locked cargo-audit
+      - name: cargo audit
+        working-directory: server
+        # RUSTSEC-2023-0071: rsa Marvin attack. Pulled in only via sqlx-mysql
+        # at compile time (sqlx-macros). We enable only the postgres feature,
+        # so rsa code is never linked into the runtime binary.
+        run: cargo audit --ignore RUSTSEC-2023-0071
+
   client:
     name: client (vitest)
     runs-on: ubuntu-latest
