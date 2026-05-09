@@ -23,6 +23,15 @@ describe('stripQueryParams', () => {
   it('handles only query string', () => {
     expect(stripQueryParams('?foo=bar')).toBe('')
   })
+
+  it('strips hash fragment', () => {
+    expect(stripQueryParams('/about#section')).toBe('/about')
+  })
+
+  it('strips both query and hash, keeping the prefix', () => {
+    expect(stripQueryParams('/about?x=1#frag')).toBe('/about')
+    expect(stripQueryParams('/about#frag?fake=1')).toBe('/about')
+  })
 })
 
 describe('getReferrerDomain', () => {

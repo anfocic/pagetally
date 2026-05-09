@@ -8,35 +8,161 @@ pub mod stats;
 pub mod types;
 
 use axum::Router;
-use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
+use axum::extract::{DefaultBodyLimit, State};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::routing::{get, post};
+use axum_prometheus::PrometheusMetricLayer;
 use state::AppState;
+use std::sync::Arc;
+use std::time::Duration;
+use tower_governor::key_extractor::SmartIpKeyExtractor;
+use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use tower_http::cors::{Any, CorsLayer};
-use tower_http::trace::TraceLayer;
+use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
+use tower_http::set_header::SetResponseHeaderLayer;
+use tower_http::timeout::TimeoutLayer;
+use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
+use tracing::Level;
+
+/// Build the application router with HTTP metrics + a `/metrics` endpoint.
+/// This installs a process-wide Prometheus recorder, so it can only be called
+/// once. `router()` (without metrics) is the entry point for tests and
+/// fixtures that may run in parallel.
+pub fn router_with_metrics(state: AppState) -> Router {
+    let (metrics_layer, metrics_handle) = PrometheusMetricLayer::pair();
+    let metrics_route = Router::new().route(
+        "/metrics",
+        get(move || {
+            let handle = metrics_handle.clone();
+            async move { handle.render() }
+        }),
+    );
+    router(state).merge(metrics_route).layer(metrics_layer)
+}
 
 pub fn router(state: AppState) -> Router {
-    let cors = CorsLayer::new()
+    let cors_collect = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any);
+
+    let cors_stats = match state.config.stats_origins.as_ref() {
+        Some(origins) if !origins.is_empty() => {
+            let parsed: Vec<HeaderValue> = origins
+                .iter()
+                .filter_map(|o| HeaderValue::from_str(o).ok())
+                .collect();
+            CorsLayer::new()
+                .allow_origin(parsed)
+                .allow_methods([axum::http::Method::GET])
+                .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
+        }
+        _ => CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods([axum::http::Method::GET])
+            .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]),
+    };
 
     let stats_routes = Router::new()
         .route("/stats/summary", get(stats::summary))
         .route("/stats/timeseries", get(stats::timeseries))
         .route("/stats/top", get(stats::top))
         .route("/stats/vitals", get(stats::vitals))
-        .route_layer(middleware::from_fn_with_state(state.clone(), require_admin));
+        .route_layer(middleware::from_fn_with_state(state.clone(), require_admin))
+        .layer(cors_stats);
 
-    Router::new()
+    const PUBLIC_BODY_LIMIT: usize = 16 * 1024;
+
+    // /collect: high volume, generous limit. burst absorbs SPA navigations
+    // that fire pageleave + pageview close together.
+    let collect_governor = Arc::new(
+        GovernorConfigBuilder::default()
+            .per_second(2)
+            .burst_size(60)
+            .key_extractor(SmartIpKeyExtractor)
+            .finish()
+            .expect("collect rate-limit config is valid"),
+    );
+
+    // /contact: low volume, strict. 5/min steady, burst 3.
+    let contact_governor = Arc::new(
+        GovernorConfigBuilder::default()
+            .per_second(12)
+            .burst_size(3)
+            .key_extractor(SmartIpKeyExtractor)
+            .finish()
+            .expect("contact rate-limit config is valid"),
+    );
+
+    let collect_route = Router::new()
         .route("/collect", post(ingest::collect))
+        .layer(GovernorLayer {
+            config: collect_governor,
+        })
+        .layer(cors_collect.clone());
+
+    let contact_route = Router::new()
         .route("/contact", post(contact::submit))
+        .layer(GovernorLayer {
+            config: contact_governor,
+        })
+        .layer(cors_collect);
+
+    let public_routes = Router::new()
+        .merge(collect_route)
+        .merge(contact_route)
+        .layer(DefaultBodyLimit::max(PUBLIC_BODY_LIMIT));
+
+    let mut app = Router::new()
+        .merge(public_routes)
         .route("/health", get(health))
         .merge(stats_routes)
-        .with_state(state)
-        .layer(cors)
-        .layer(TraceLayer::new_for_http())
+        .with_state(state.clone());
+
+    // Security response headers (defense in depth — most are also useful when
+    // clients embed our endpoints in their own pages). CSP `default-src 'none'`
+    // is appropriate because every response is JSON or plain text — nothing
+    // we serve should ever load subresources or execute script.
+    app = app
+        .layer(SetResponseHeaderLayer::if_not_present(
+            HeaderName::from_static("x-content-type-options"),
+            HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            HeaderName::from_static("referrer-policy"),
+            HeaderValue::from_static("no-referrer"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            HeaderName::from_static("x-frame-options"),
+            HeaderValue::from_static("DENY"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            HeaderName::from_static("content-security-policy"),
+            HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'"),
+        ));
+
+    if state.config.behind_tls {
+        app = app.layer(SetResponseHeaderLayer::if_not_present(
+            HeaderName::from_static("strict-transport-security"),
+            HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+        ));
+    }
+
+    let x_request_id = HeaderName::from_static("x-request-id");
+
+    app.layer(TimeoutLayer::new(Duration::from_secs(15)))
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(
+                    DefaultMakeSpan::new()
+                        .level(Level::INFO)
+                        .include_headers(false),
+                )
+                .on_response(DefaultOnResponse::new().level(Level::INFO)),
+        )
+        .layer(PropagateRequestIdLayer::new(x_request_id.clone()))
+        .layer(SetRequestIdLayer::new(x_request_id, MakeRequestUuid))
 }
 
 async fn require_admin(

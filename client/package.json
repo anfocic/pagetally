@@ -13,15 +13,24 @@
       "require": "./dist/index.cjs"
     }
   },
+  "sideEffects": false,
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",
-    "prepublishOnly": "npm run build"
+    "prepack": "cp ../README.md ./README.md && cp ../LICENSE ./LICENSE && npm run build"
   },
   "keywords": [
     "analytics",

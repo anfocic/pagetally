@@ -1,6 +1,9 @@
 export function stripQueryParams(path: string): string {
-  const i = path.indexOf('?')
-  return i === -1 ? path : path.slice(0, i)
+  const q = path.indexOf('?')
+  const h = path.indexOf('#')
+  const cuts = [q, h].filter((i) => i !== -1)
+  if (cuts.length === 0) return path
+  return path.slice(0, Math.min(...cuts))
 }
 
 export function getReferrerDomain(): string | undefined {

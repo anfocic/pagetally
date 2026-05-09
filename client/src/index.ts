@@ -66,6 +66,13 @@ export class Analytics {
       eng.reset(next)
     }
     this.cleanups.push(startAutoTracking(() => fireView()))
+
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) fireView()
+    }
+    window.addEventListener('pageshow', onPageShow)
+    this.cleanups.push(() => window.removeEventListener('pageshow', onPageShow))
+
     fireView()
   }
 

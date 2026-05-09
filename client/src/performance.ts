@@ -14,6 +14,15 @@ export function startPerformanceTracking(
     ttfb: 0,
   }
 
+  const onHidden = () => {
+    if (document.visibilityState === 'hidden') flush()
+  }
+  let timer: ReturnType<typeof setTimeout> | null = null
+  const cleanup = () => {
+    document.removeEventListener('visibilitychange', onHidden)
+    if (timer != null) clearTimeout(timer)
+  }
+
   const flush = () => {
     if (reported) return
     reported = true
@@ -98,27 +107,30 @@ export function startPerformanceTracking(
     observers.push(obs)
   } catch {}
 
-  // TTFB
-  try {
-    const nav = performance.getEntriesByType(
-      'navigation',
-    )[0] as PerformanceNavigationTiming
-    if (nav && nav.responseStart > 0) {
+  // TTFB — try sync read first, then observe in case nav entry isn't ready yet
+  const readTtfb = (e?: PerformanceNavigationTiming) => {
+    const nav =
+      e ??
+      (performance.getEntriesByType(
+        'navigation',
+      )[0] as PerformanceNavigationTiming | undefined)
+    if (nav && nav.responseStart > 0 && metrics.ttfb === 0) {
       metrics.ttfb = nav.responseStart
     }
+  }
+  try {
+    readTtfb()
+    const obs = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        readTtfb(entry as PerformanceNavigationTiming)
+      }
+    })
+    obs.observe({ type: 'navigation', buffered: true })
+    observers.push(obs)
   } catch {}
 
-  // Report on page hide or after timeout
-  const onHidden = () => {
-    if (document.visibilityState === 'hidden') flush()
-  }
   document.addEventListener('visibilitychange', onHidden)
-  const timer = setTimeout(flush, 15000)
-
-  const cleanup = () => {
-    document.removeEventListener('visibilitychange', onHidden)
-    clearTimeout(timer)
-  }
+  timer = setTimeout(flush, 15000)
 
   return () => {
     flush()
