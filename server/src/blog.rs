@@ -208,7 +208,7 @@ pub async fn create(
     headers: HeaderMap,
     Json(body): Json<CreatePost>,
 ) -> Result<(StatusCode, Json<PostDetail>), StatusCode> {
-    if !crate::is_admin(&state, &headers) {
+    if !crate::is_admin_strict(&state, &headers) {
         return Err(StatusCode::UNAUTHORIZED);
     }
 
@@ -252,7 +252,7 @@ pub async fn update(
     Path(id): Path<String>,
     Json(body): Json<UpdatePost>,
 ) -> Result<Json<PostDetail>, StatusCode> {
-    if !crate::is_admin(&state, &headers) {
+    if !crate::is_admin_strict(&state, &headers) {
         return Err(StatusCode::UNAUTHORIZED);
     }
 
@@ -316,7 +316,7 @@ pub async fn delete_post(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
-    if !crate::is_admin(&state, &headers) {
+    if !crate::is_admin_strict(&state, &headers) {
         return Err(StatusCode::UNAUTHORIZED);
     }
 

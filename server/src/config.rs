@@ -6,11 +6,12 @@ pub struct Config {
     pub bind_addr: String,
     pub database_url: String,
     pub allowed_sites: Option<Vec<String>>,
-    /// If set, all `/stats/*` requests and the blog write endpoints
-    /// (`POST`/`PATCH`/`DELETE /posts`) must present `Authorization: Bearer <token>`.
-    /// If unset, the stats endpoints are open *and* anyone can create/edit/delete blog
-    /// posts — fine for trusted networks but dangerous on the public internet, so the
-    /// server logs a warning at startup.
+    /// Gates the admin surface. When set, `/stats/*` and the gated blog operations
+    /// require `Authorization: Bearer <token>`. When unset, `/stats/*` and blog
+    /// reads are open (fine on a trusted network, dangerous on the public internet
+    /// — the server warns at startup), but the blog *write* endpoints
+    /// (`POST`/`PATCH`/`DELETE /posts`) are refused entirely until a token is
+    /// configured: destructive operations are secure by default.
     pub admin_token: Option<String>,
     pub email: Option<EmailConfig>,
     /// Recipient for `POST /contact` submissions. Required for the endpoint to

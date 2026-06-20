@@ -253,6 +253,14 @@ pub(crate) fn is_admin(state: &AppState, headers: &HeaderMap) -> bool {
         .is_some_and(|token| constant_time_eq(token.as_bytes(), expected.as_bytes()))
 }
 
+/// Like [`is_admin`], but a missing `ADMIN_TOKEN` is treated as *not* authorized.
+/// Gates the blog write endpoints (create/update/delete) so an unconfigured
+/// deploy can't be mutated by anonymous callers — secure by default, even though
+/// reads stay open when no token is set.
+pub(crate) fn is_admin_strict(state: &AppState, headers: &HeaderMap) -> bool {
+    state.config.admin_token.is_some() && is_admin(state, headers)
+}
+
 /// Constant-time token comparison. Both sides are hashed to a fixed-width
 /// digest first, so the comparison leaks neither the contents nor the length of
 /// the expected token (the previous length check returned early on a mismatch,

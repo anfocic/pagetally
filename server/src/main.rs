@@ -26,9 +26,10 @@ async fn main() -> anyhow::Result<()> {
 
     if config.admin_token.is_none() {
         tracing::warn!(
-            "ADMIN_TOKEN is not set — /stats/* are publicly readable AND the blog write \
-             endpoints (POST/PATCH/DELETE /posts) are open to anonymous callers. \
-             Set ADMIN_TOKEN to require Bearer auth."
+            "ADMIN_TOKEN is not set — /stats/* and all blog reads (including drafts) \
+             are publicly readable, and the blog write endpoints (POST/PATCH/DELETE \
+             /posts) are refused until it is set. Set ADMIN_TOKEN to gate reads and \
+             enable authenticated writes."
         );
     }
 
