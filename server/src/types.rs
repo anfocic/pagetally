@@ -57,6 +57,11 @@ pub const MAX_REFERRER: usize = 253;
 pub const MAX_EVENT_NAME: usize = 64;
 pub const MAX_UTM: usize = 128;
 pub const MAX_VID: usize = 64;
+pub const MAX_PROP_KEYS: usize = 32;
+pub const MAX_PROP_KEY_LEN: usize = 64;
+pub const MAX_PROP_VALUE_LEN: usize = 1024;
+
+const VALID_DEVICES: [&str; 3] = ["mobile", "tablet", "desktop"];
 
 /// Client `ts` is not trusted for range bucketing. Absurd values (clock skew,
 /// spoofing) are clamped into a sane window around the server clock so one
@@ -116,6 +121,45 @@ impl RawPayload {
             && vid.len() > MAX_VID
         {
             return Err("invalid vid");
+        }
+        // An empty view_id is meaningless and, stored as '' (not NULL), would
+        // collapse distinct page-visits into one bogus bucket; treat it as absent.
+        match self {
+            RawPayload::Pageview { vid, .. }
+            | RawPayload::Event { vid, .. }
+            | RawPayload::Performance { vid, .. }
+            | RawPayload::Pageleave { vid, .. } => {
+                if vid.as_deref() == Some("") {
+                    *vid = None;
+                }
+            }
+        }
+        // Coerce an unrecognized device class to NULL instead of letting it fail
+        // the DB CHECK constraint — the insert is fire-and-forget, so a rejected
+        // row would drop the whole (otherwise valid) event silently.
+        if let RawPayload::Pageview { d, .. } = self
+            && d.as_deref()
+                .is_some_and(|dev| !VALID_DEVICES.contains(&dev))
+        {
+            *d = None;
+        }
+        // Cap event props so a single 16KB body can't stuff one giant value (or
+        // a flood of keys) into the unindexed jsonb column.
+        if let RawPayload::Event {
+            pr: Some(props), ..
+        } = self
+        {
+            if props.len() > MAX_PROP_KEYS {
+                return Err("too many event props");
+            }
+            for (k, v) in props.iter() {
+                if k.len() > MAX_PROP_KEY_LEN {
+                    return Err("invalid event prop key");
+                }
+                if serde_json::to_string(v).map(|s| s.len()).unwrap_or(0) > MAX_PROP_VALUE_LEN {
+                    return Err("invalid event prop value");
+                }
+            }
         }
         if let RawPayload::Performance { pf, .. } = self {
             // Postgres percentile_cont chokes on NaN; drop non-finite values.
