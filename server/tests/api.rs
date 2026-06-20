@@ -1439,3 +1439,113 @@ async fn sessions_omitted_when_disabled(pool: PgPool) {
     assert!(body.get("avgPagesPerSession").is_none(), "got {body}");
     assert!(body.get("bounceRate").is_none(), "got {body}");
 }
+
+// ---- Tier 3b metrics (funnels) ----
+
+#[sqlx::test]
+async fn funnel_counts_ordered_conversions(pool: PgPool) {
+    let app = router(state_with(pool.clone(), None, None, true));
+    let now = chrono::Utc::now().timestamp_millis();
+    let min = 60 * 1000;
+    // 4 visitors (distinct IPs) enter /a; 2 continue to /b; 1 reaches /c.
+    for (p, t) in [("/a", now - 2 * min), ("/b", now - min), ("/c", now)] {
+        app.clone()
+            .oneshot(post_collect_ua(
+                json!({"t":"pageview","s":"s","p":p,"ts":t}),
+                "1.1.1.1",
+                CHROME_WIN,
+            ))
+            .await
+            .unwrap();
+    }
+    for (p, t) in [("/a", now - min), ("/b", now)] {
+        app.clone()
+            .oneshot(post_collect_ua(
+                json!({"t":"pageview","s":"s","p":p,"ts":t}),
+                "2.2.2.2",
+                CHROME_WIN,
+            ))
+            .await
+            .unwrap();
+    }
+    for ip in ["3.3.3.3", "4.4.4.4"] {
+        app.clone()
+            .oneshot(post_collect_ua(
+                json!({"t":"pageview","s":"s","p":"/a","ts":now}),
+                ip,
+                CHROME_WIN,
+            ))
+            .await
+            .unwrap();
+    }
+    wait_for_count(&pool, 7).await;
+
+    let resp = app
+        .oneshot(
+            Request::get("/stats/funnel?site=s&days=365&steps=/a,/b,/c")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["steps"].as_array().unwrap().len(), 3, "got {body}");
+    assert_eq!(body["steps"][0]["key"], "/a");
+    assert_eq!(body["steps"][0]["sessions"], 4, "got {body}");
+    assert_eq!(body["steps"][1]["sessions"], 2);
+    assert_eq!(body["steps"][2]["sessions"], 1);
+    assert_eq!(body["steps"][1]["conversionFromStart"], 0.5);
+    assert_eq!(body["steps"][2]["conversionFromStart"], 0.25);
+    assert_eq!(body["steps"][1]["conversionFromPrev"], 0.5);
+    assert_eq!(body["steps"][2]["conversionFromPrev"], 0.5);
+}
+
+#[sqlx::test]
+async fn funnel_respects_step_order(pool: PgPool) {
+    let app = router(state_with(pool.clone(), None, None, true));
+    let now = chrono::Utc::now().timestamp_millis();
+    let min = 60 * 1000;
+    // One visitor visits /b BEFORE /a. For funnel /a -> /b, only step 1 (/a) is
+    // reached; the earlier /b does not count toward step 2.
+    for (p, t) in [("/b", now - min), ("/a", now)] {
+        app.clone()
+            .oneshot(post_collect_ua(
+                json!({"t":"pageview","s":"s","p":p,"ts":t}),
+                "1.1.1.1",
+                CHROME_WIN,
+            ))
+            .await
+            .unwrap();
+    }
+    wait_for_count(&pool, 2).await;
+
+    let resp = app
+        .oneshot(
+            Request::get("/stats/funnel?site=s&days=365&steps=/a,/b")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    assert_eq!(body["steps"][0]["sessions"], 1, "reached /a; got {body}");
+    assert_eq!(
+        body["steps"][1]["sessions"], 0,
+        "/b came before /a, so step 2 is not reached; got {body}"
+    );
+}
+
+#[sqlx::test]
+async fn funnel_rejects_too_few_steps(pool: PgPool) {
+    let app = router(state_with(pool.clone(), None, None, true));
+    let resp = app
+        .oneshot(
+            Request::get("/stats/funnel?site=s&days=365&steps=/a")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}

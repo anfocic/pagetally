@@ -568,3 +568,30 @@ impl TopDimension {
         }
     }
 }
+
+/// An ordered path funnel (`/stats/funnel`). Each step reports how many sessions
+/// reached it **in time order** within a session, plus conversion rates.
+#[derive(Debug, Clone, Serialize)]
+pub struct Funnel {
+    pub steps: Vec<FunnelStep>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FunnelStep {
+    /// 1-based position in the funnel.
+    pub step: i32,
+    /// The step's pageview path.
+    pub key: String,
+    /// Sessions that reached this step in order.
+    pub sessions: i64,
+    /// `sessions[i] / sessions[i-1]`. `1.0` for step 1; `None` if the previous
+    /// step has 0 sessions.
+    #[serde(rename = "conversionFromPrev", skip_serializing_if = "Option::is_none")]
+    pub conversion_from_prev: Option<f64>,
+    /// `sessions[i] / sessions[1]`. `None` if step 1 has 0 sessions.
+    #[serde(
+        rename = "conversionFromStart",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub conversion_from_start: Option<f64>,
+}
