@@ -1,3 +1,4 @@
+pub mod blog;
 pub mod channels;
 pub mod config;
 pub mod contact;
@@ -153,11 +154,27 @@ pub fn router(state: AppState) -> Router {
         .merge(contact_route)
         .layer(DefaultBodyLimit::max(PUBLIC_BODY_LIMIT));
 
+    // Blog CRUD + view counter. Auth is checked per-handler (some endpoints are
+    // public, some admin-only, some change behaviour based on whether the caller
+    // is admin), so unlike `/stats/*` there is no router-level admin layer. GET,
+    // PATCH and DELETE share `/posts/:key` under one param name — axum/matchit
+    // reject the same path registered with differing capture names.
+    let blog_routes = Router::new()
+        .route("/posts", get(blog::list).post(blog::create))
+        .route(
+            "/posts/:key",
+            get(blog::get_post)
+                .patch(blog::update)
+                .delete(blog::delete_post),
+        )
+        .route("/posts/:key/view", post(blog::view));
+
     let mut app = Router::new()
         .merge(public_routes)
         .route("/health", get(health))
         .route("/pt.js", get(serve_script))
         .merge(stats_routes)
+        .merge(blog_routes)
         .with_state(state.clone());
 
     // Security response headers (defense in depth — most are also useful when
@@ -211,22 +228,29 @@ async fn require_admin(
     request: axum::extract::Request,
     next: Next,
 ) -> Result<axum::response::Response, StatusCode> {
+    if is_admin(&state, &headers) {
+        Ok(next.run(request).await)
+    } else {
+        Err(StatusCode::UNAUTHORIZED)
+    }
+}
+
+/// Whether a request carries a valid admin bearer token. When no `ADMIN_TOKEN`
+/// is configured this returns `true` — endpoints are open, matching the
+/// `/stats/*` middleware behaviour (the server warns about this at startup).
+/// Used both by the `require_admin` middleware and by handlers (e.g. blog) that
+/// need to vary behaviour based on whether the caller is admin.
+pub(crate) fn is_admin(state: &AppState, headers: &HeaderMap) -> bool {
     let Some(expected) = state.config.admin_token.as_deref() else {
-        return Ok(next.run(request).await);
+        return true;
     };
 
-    let presented = headers
+    headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.strip_prefix("Bearer "))
-        .map(str::trim);
-
-    match presented {
-        Some(token) if constant_time_eq(token.as_bytes(), expected.as_bytes()) => {
-            Ok(next.run(request).await)
-        }
-        _ => Err(StatusCode::UNAUTHORIZED),
-    }
+        .map(str::trim)
+        .is_some_and(|token| constant_time_eq(token.as_bytes(), expected.as_bytes()))
 }
 
 /// Constant-time token comparison. Both sides are hashed to a fixed-width

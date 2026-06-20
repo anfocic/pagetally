@@ -124,6 +124,23 @@ GET /stats/funnel?site=my-site&days=30&steps=/,/pricing,/signup
 
 `events` returns the top event names for a site; add `name=<event>&by=<prop>` to get the distribution of one event's prop value (e.g. scroll-depth milestones).
 
+## Blog API
+
+An optional set of endpoints for storing blog posts and counting per-post views, intended for an SSR frontend that talks to pagetally server-to-server. Responses are JSON with **snake_case** keys (unlike `/stats/*`, which is camelCase). Markdown is stored and returned **raw** in `body_markdown` — it is never rendered to HTML server-side; the caller sanitizes and renders it.
+
+```
+GET    /posts?limit=20&offset=0&status=published   # list (status=all incl. drafts needs admin)
+GET    /posts/:slug                                # single post (PostDetail)
+POST   /posts/:slug/view                           # public, atomic view++ -> 204
+POST   /posts                                      # create (admin) -> 201
+PATCH  /posts/:id                                  # update (admin) -> 200
+DELETE /posts/:id                                  # delete (admin) -> 204
+```
+
+- **Auth.** Create / update / delete and `status=all` reuse the same `Authorization: Bearer $ADMIN_TOKEN` as `/stats/*`. As with stats, when `ADMIN_TOKEN` is unset these are **open** — meaning anyone can create, edit, or delete posts. Set `ADMIN_TOKEN` on any public deploy.
+- **Drafts.** `draft=true` posts are hidden from the published list and return 404 on `GET /posts/:slug` unless the request is admin-authed. `POST /posts/:slug/view` only counts non-draft posts and is always a no-op `204` (missing/draft slug included) — no dedupe; debounce client-side.
+- **`POST /posts`** body: `{ slug, title, description?, author?, image?, body_markdown, draft?, pub_date? }`. `slug` must match `^[a-z0-9-]+$`; duplicate slug returns `409`. **`PATCH /posts/:id`** accepts any subset of those fields and sets `updated_date`.
+
 ## What gets collected
 
 - Pageviews (path, referrer domain, device class, viewport bucket, country, UTM tags)
