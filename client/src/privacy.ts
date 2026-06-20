@@ -1,3 +1,5 @@
+import type { Campaign } from './types'
+
 export function stripQueryParams(path: string): string {
   const q = path.indexOf('?')
   const h = path.indexOf('#')
@@ -25,6 +27,31 @@ export function getDeviceClass(w: number): 'mobile' | 'tablet' | 'desktop' {
 
 export function roundViewportWidth(w: number): number {
   return Math.round(w / 10) * 10
+}
+
+const UTM_MAX = 128
+
+export function extractCampaign(search: string): Campaign | undefined {
+  let params: URLSearchParams
+  try {
+    params = new URLSearchParams(search)
+  } catch {
+    return undefined
+  }
+  const pick = (key: string): string | undefined => {
+    const v = params.get(key)
+    if (!v) return undefined
+    return v.length > UTM_MAX ? v.slice(0, UTM_MAX) : v
+  }
+  const s = pick('utm_source')
+  const m = pick('utm_medium')
+  const c = pick('utm_campaign')
+  if (s === undefined && m === undefined && c === undefined) return undefined
+  const out: Campaign = {}
+  if (s !== undefined) out.s = s
+  if (m !== undefined) out.m = m
+  if (c !== undefined) out.c = c
+  return out
 }
 
 export function checkDNT(): boolean {

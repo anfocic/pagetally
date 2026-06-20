@@ -3,6 +3,14 @@ export interface AnalyticsConfig {
   siteId: string
   autoTrack?: boolean
   respectDNT?: boolean
+  trackScroll?: boolean
+  trackOutboundLinks?: boolean
+}
+
+export interface Campaign {
+  s?: string
+  m?: string
+  c?: string
 }
 
 export type EventType = 'pageview' | 'event' | 'performance' | 'pageleave'
@@ -27,4 +35,5 @@ export interface Payload {
   pr?: Record<string, unknown>
   pf?: PerformanceMetrics
   dur?: number
+  u?: Campaign
 }

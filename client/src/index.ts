@@ -11,6 +11,8 @@ import {
 import { startAutoTracking } from './collect'
 import { startPerformanceTracking } from './performance'
 import { startEngagement, type Engagement } from './engagement'
+import { startScrollTracking, type ScrollTracker } from './scroll'
+import { startClickTracking } from './clicks'
 
 export type { AnalyticsConfig, Payload, PerformanceMetrics } from './types'
 
@@ -21,6 +23,7 @@ export class Analytics {
   private cleanups: (() => void)[] = []
   private stopped = false
   private engagement: Engagement | null = null
+  private scroll: ScrollTracker | null = null
   private lastViewPath = ''
   private lastViewTime = 0
 
@@ -37,6 +40,8 @@ export class Analytics {
       siteId: config.siteId,
       autoTrack: config.autoTrack ?? true,
       respectDNT: config.respectDNT ?? false,
+      trackScroll: config.trackScroll ?? false,
+      trackOutboundLinks: config.trackOutboundLinks ?? false,
     }
 
     if (this.config.respectDNT && checkDNT()) {
@@ -81,6 +86,21 @@ export class Analytics {
     this.engagement = eng
     this.cleanups.push(() => eng.stop())
 
+    if (this.config.trackScroll) {
+      const scroll = startScrollTracking((pct) => {
+        this._send(buildEventPayload('scroll_depth', { pct }))
+      })
+      this.scroll = scroll
+      this.cleanups.push(() => scroll.stop())
+    }
+
+    if (this.config.trackOutboundLinks) {
+      const clicks = startClickTracking((name, props) => {
+        this._send(buildEventPayload(name, props))
+      })
+      this.cleanups.push(() => clicks.stop())
+    }
+
     const fireView = (path?: string) => {
       const next = path ?? getPath()
       const now = Date.now()
@@ -90,6 +110,7 @@ export class Analytics {
       eng.flush()
       this._send(buildPageViewPayload(next))
       eng.reset(next)
+      this.scroll?.reset()
     }
     this.cleanups.push(startAutoTracking(() => fireView()))
 
@@ -138,6 +159,7 @@ export class Analytics {
     const next = path ?? getPath()
     this._send(buildPageViewPayload(next))
     this.engagement?.reset(next)
+    this.scroll?.reset()
   }
 
   /** Stop all tracking and clean up observers. */
@@ -149,5 +171,6 @@ export class Analytics {
     }
     this.cleanups = []
     this.engagement = null
+    this.scroll = null
   }
 }

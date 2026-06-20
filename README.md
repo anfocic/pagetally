@@ -39,6 +39,19 @@ new Analytics({
 });
 ```
 
+Client options:
+
+| Option | Default | What |
+|---|---|---|
+| `siteId` | — (required) | Site identifier sent with every event |
+| `endpoint` | — (required) | URL of the server `/collect` endpoint |
+| `autoTrack` | `true` | Auto-fire pageviews on load and SPA navigation |
+| `respectDNT` | `false` | Send nothing when DNT / GPC is on |
+| `trackScroll` | `false` | Emit `scroll_depth` events at 25/50/75/100% |
+| `trackOutboundLinks` | `false` | Emit `outbound` / `download` events on link clicks |
+
+UTM tags (`utm_source` / `utm_medium` / `utm_campaign`) on the landing URL are always captured and attached to the pageview — no flag needed.
+
 ### 3. Read stats
 
 All `/stats/*` endpoints require `Authorization: Bearer $ADMIN_TOKEN` when the server has `ADMIN_TOKEN` set.
@@ -47,19 +60,24 @@ All `/stats/*` endpoints require `Authorization: Bearer $ADMIN_TOKEN` when the s
 GET /stats/summary?site=my-site&days=30
 GET /stats/timeseries?site=my-site&days=30&bucket=day
 GET /stats/top?site=my-site&dim=path&limit=10
+GET /stats/events?site=my-site&name=scroll_depth&by=pct
 GET /stats/vitals?site=my-site&days=30
 ```
 
 `top?dim=path` returns `avgDurMs` per path. `summary` returns `avgTimeOnPageMs`.
 
+`top` dimensions: `path`, `referrer`, `country`, `device`, `utm_source`, `utm_medium`, `utm_campaign`.
+
+`events` returns the top event names for a site; add `name=<event>&by=<prop>` to get the distribution of one event's prop value (e.g. scroll-depth milestones).
+
 ## What gets collected
 
-- Pageviews (path, referrer domain, device class, viewport bucket, country)
-- Custom events (name + optional props)
+- Pageviews (path, referrer domain, device class, viewport bucket, country, UTM tags)
+- Custom events (name + optional props) — including opt-in scroll depth and outbound/download clicks
 - Web vitals (LCP, FCP, CLS, INP, TTFB)
 - **Time on page** — visible duration only. The client never measures while the tab is hidden, and stops at 30 minutes per page.
 
-No cookies, no fingerprinting, no IP storage. The browser client is ~5 KB.
+No cookies, no fingerprinting, no IP storage. The browser client is ~3 KB gzipped.
 
 ## Configuration
 

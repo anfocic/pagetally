@@ -5,6 +5,7 @@ import {
   getDeviceClass,
   roundViewportWidth,
   checkDNT,
+  extractCampaign,
 } from '../src/privacy'
 
 describe('stripQueryParams', () => {
@@ -86,6 +87,39 @@ describe('roundViewportWidth', () => {
 
   it('handles zero', () => {
     expect(roundViewportWidth(0)).toBe(0)
+  })
+})
+
+describe('extractCampaign', () => {
+  it('returns undefined when no utm params', () => {
+    expect(extractCampaign('?foo=bar')).toBeUndefined()
+    expect(extractCampaign('')).toBeUndefined()
+  })
+
+  it('extracts all three utm params', () => {
+    expect(extractCampaign('?utm_source=news&utm_medium=email&utm_campaign=spring')).toEqual({
+      s: 'news',
+      m: 'email',
+      c: 'spring',
+    })
+  })
+
+  it('extracts a partial set, omitting absent keys', () => {
+    expect(extractCampaign('?utm_source=twitter')).toEqual({ s: 'twitter' })
+  })
+
+  it('ignores empty utm values', () => {
+    expect(extractCampaign('?utm_source=&utm_medium=cpc')).toEqual({ m: 'cpc' })
+  })
+
+  it('works with or without a leading question mark', () => {
+    expect(extractCampaign('utm_source=x')).toEqual({ s: 'x' })
+  })
+
+  it('caps oversized values at 128 chars', () => {
+    const long = 'a'.repeat(200)
+    const out = extractCampaign(`?utm_source=${long}`)
+    expect(out?.s?.length).toBe(128)
   })
 })
 

@@ -34,8 +34,17 @@ pub async fn insert_event(
         event_props,
         metrics,
         dur_ms,
+        utm,
     ) = match payload {
-        RawPayload::Pageview { s, p, ts, r, d, v } => (
+        RawPayload::Pageview {
+            s,
+            p,
+            ts,
+            r,
+            d,
+            v,
+            u,
+        } => (
             s.as_str(),
             "pageview",
             p.as_str(),
@@ -47,6 +56,7 @@ pub async fn insert_event(
             None,
             None,
             None,
+            u.as_ref(),
         ),
         RawPayload::Event { s, p, ts, n, pr } => (
             s.as_str(),
@@ -58,6 +68,7 @@ pub async fn insert_event(
             None,
             Some(n.as_str()),
             pr.as_ref().map(|m| serde_json::to_value(m).unwrap()),
+            None,
             None,
             None,
         ),
@@ -73,6 +84,7 @@ pub async fn insert_event(
             None,
             Some(serde_json::to_value(pf).unwrap()),
             None,
+            None,
         ),
         RawPayload::Pageleave { s, p, ts, dur } => (
             s.as_str(),
@@ -86,13 +98,19 @@ pub async fn insert_event(
             None,
             None,
             Some((*dur).clamp(0, PAGELEAVE_DUR_MAX_MS)),
+            None,
         ),
+    };
+
+    let (utm_source, utm_medium, utm_campaign) = match utm {
+        Some(u) => (u.s.as_deref(), u.m.as_deref(), u.c.as_deref()),
+        None => (None, None, None),
     };
 
     sqlx::query(
         "INSERT INTO analytics_events
-            (site_id, type, path, ts, referrer, device, viewport, event_name, event_props, metrics, country, dur_ms)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+            (site_id, type, path, ts, referrer, device, viewport, event_name, event_props, metrics, country, dur_ms, utm_source, utm_medium, utm_campaign)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
     )
     .bind(site_id)
     .bind(kind)
@@ -106,6 +124,9 @@ pub async fn insert_event(
     .bind(metrics)
     .bind(country)
     .bind(dur_ms)
+    .bind(utm_source)
+    .bind(utm_medium)
+    .bind(utm_campaign)
     .execute(pool)
     .await?;
     Ok(())
@@ -234,6 +255,65 @@ pub async fn top(
     .bind(limit)
     .fetch_all(pool)
     .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| TopRow {
+            key: r
+                .try_get::<Option<String>, _>("key")
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| "(none)".into()),
+            count: r.try_get("count").unwrap_or(0),
+            avg_dur_ms: None,
+        })
+        .collect())
+}
+
+/// Custom-event analytics. With `by` set, returns the distribution of a single
+/// event's prop value (e.g. `name=scroll_depth&by=pct`). Without `by`, returns
+/// the top event names. `name` and `by` are bind params — never interpolated.
+pub async fn events(
+    pool: &PgPool,
+    site_id: &str,
+    from_ts: i64,
+    to_ts: i64,
+    name: Option<&str>,
+    by: Option<&str>,
+    limit: i64,
+) -> sqlx::Result<Vec<TopRow>> {
+    let rows = if let Some(by) = by {
+        sqlx::query(
+            "SELECT event_props ->> $4 AS key, COUNT(*)::bigint AS count
+             FROM analytics_events
+             WHERE site_id = $1 AND ts BETWEEN $2 AND $3
+                   AND type = 'event' AND event_name = $5
+                   AND event_props ->> $4 IS NOT NULL
+             GROUP BY key ORDER BY count DESC LIMIT $6",
+        )
+        .bind(site_id)
+        .bind(from_ts)
+        .bind(to_ts)
+        .bind(by)
+        .bind(name)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?
+    } else {
+        sqlx::query(
+            "SELECT event_name AS key, COUNT(*)::bigint AS count
+             FROM analytics_events
+             WHERE site_id = $1 AND ts BETWEEN $2 AND $3
+                   AND type = 'event' AND event_name IS NOT NULL
+             GROUP BY key ORDER BY count DESC LIMIT $4",
+        )
+        .bind(site_id)
+        .bind(from_ts)
+        .bind(to_ts)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?
+    };
 
     Ok(rows
         .into_iter()

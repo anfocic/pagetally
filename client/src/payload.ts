@@ -4,6 +4,7 @@ import {
   getReferrerDomain,
   getDeviceClass,
   roundViewportWidth,
+  extractCampaign,
 } from './privacy'
 
 export function getPath(): string {
@@ -12,6 +13,7 @@ export function getPath(): string {
 
 export function buildPageViewPayload(path?: string): Omit<Payload, 's'> {
   const w = roundViewportWidth(window.innerWidth)
+  const u = extractCampaign(location.search)
 
   return {
     t: 'pageview',
@@ -20,6 +22,7 @@ export function buildPageViewPayload(path?: string): Omit<Payload, 's'> {
     r: getReferrerDomain(),
     d: getDeviceClass(window.innerWidth),
     v: w > 0 ? w : undefined,
+    ...(u ? { u } : {}),
   }
 }
 

@@ -40,6 +40,19 @@ fn default_limit() -> u32 {
     10
 }
 
+#[derive(Debug, Deserialize)]
+pub struct EventsQuery {
+    pub site: String,
+    #[serde(default = "default_days")]
+    pub days: u32,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub by: Option<String>,
+    #[serde(default = "default_limit")]
+    pub limit: u32,
+}
+
 fn range(days: u32) -> (i64, i64) {
     let days = days.clamp(1, 365) as i64;
     let to_ts = chrono::Utc::now().timestamp_millis();
@@ -102,6 +115,34 @@ pub async fn top(
             tracing::error!(error = %err, "top query failed");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
+    Ok(Json(rows))
+}
+
+pub async fn events(
+    State(state): State<AppState>,
+    Query(q): Query<EventsQuery>,
+) -> Result<impl IntoResponse, StatusCode> {
+    site_check(&state, &q.site)?;
+    // A prop breakdown needs an event to break down; reject `by` without `name`.
+    if q.by.is_some() && q.name.is_none() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let limit = q.limit.clamp(1, 100) as i64;
+    let (from_ts, to_ts) = range(q.days);
+    let rows = crate::db::events(
+        &state.pool,
+        &q.site,
+        from_ts,
+        to_ts,
+        q.name.as_deref(),
+        q.by.as_deref(),
+        limit,
+    )
+    .await
+    .map_err(|err| {
+        tracing::error!(error = %err, "events query failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     Ok(Json(rows))
 }
 
