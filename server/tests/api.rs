@@ -608,11 +608,12 @@ async fn top_breaks_down_by_browser_when_enabled(pool: PgPool) {
 }
 
 #[sqlx::test]
-async fn salt_rotates_daily_and_cleans_up_old(pool: PgPool) {
+async fn salt_rotates_daily_and_keeps_48h(pool: PgPool) {
     use pagetally_server::salt::{current_salt, new_cache};
     let cache = new_cache();
     let d1 = chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
     let d2 = chrono::NaiveDate::from_ymd_opt(2026, 1, 2).unwrap();
+    let d3 = chrono::NaiveDate::from_ymd_opt(2026, 1, 3).unwrap();
     let d5 = chrono::NaiveDate::from_ymd_opt(2026, 1, 5).unwrap();
 
     let s1 = current_salt(&pool, &cache, d1).await.unwrap();
@@ -622,7 +623,16 @@ async fn salt_rotates_daily_and_cleans_up_old(pool: PgPool) {
     let s2 = current_salt(&pool, &cache, d2).await.unwrap();
     assert_ne!(s1, s2, "salt rotates across days");
 
-    // Advancing to d5 deletes salts older than d3 (d5 - 2), so d1 and d2 go.
+    // 48h retention: by d3, only yesterday (d2) and today (d3) remain — d1 is gone.
+    current_salt(&pool, &cache, d3).await.unwrap();
+    let remaining: Vec<chrono::NaiveDate> =
+        sqlx::query_scalar("SELECT day FROM daily_salts ORDER BY day")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(remaining, vec![d2, d3], "keeps only today + yesterday");
+
+    // A multi-day jump prunes everything stale.
     current_salt(&pool, &cache, d5).await.unwrap();
     let remaining: Vec<chrono::NaiveDate> =
         sqlx::query_scalar("SELECT day FROM daily_salts ORDER BY day")
@@ -653,4 +663,68 @@ async fn pageleave_dur_is_clamped(pool: PgPool) {
             .await
             .unwrap();
     assert_eq!(dur, 1_800_000);
+}
+
+#[sqlx::test]
+async fn collect_rate_limits_per_ip(pool: PgPool) {
+    let app = router(test_state(pool.clone(), None, None));
+    let body = json!({"t": "pageview", "s": "site-1", "p": "/", "ts": 1_700_000_000_000_i64});
+
+    // Burst is 60; firing well past it from one IP must eventually 429.
+    let mut saw_429 = false;
+    for _ in 0..80 {
+        let resp = app
+            .clone()
+            .oneshot(post_collect(body.clone()))
+            .await
+            .unwrap();
+        if resp.status() == StatusCode::TOO_MANY_REQUESTS {
+            saw_429 = true;
+            break;
+        }
+    }
+    assert!(saw_429, "expected a 429 once the burst is exhausted");
+
+    // The limiter is keyed per IP: a different client is unaffected.
+    let other = Request::builder()
+        .uri("/collect")
+        .method("POST")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("x-forwarded-for", "10.9.9.9")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let resp = app.oneshot(other).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+}
+
+#[sqlx::test]
+async fn collect_clamps_absurd_future_ts(pool: PgPool) {
+    let app = router(test_state(pool.clone(), None, None));
+    let far_future = 32_503_680_000_000_i64; // ~year 3000
+    let resp = app
+        .oneshot(post_collect(json!({
+            "t": "pageview",
+            "s": "site-1",
+            "p": "/",
+            "ts": far_future,
+            "d": "desktop"
+        })))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    wait_for_count(&pool, 1).await;
+
+    let ts: i64 = sqlx::query_scalar("SELECT ts FROM analytics_events LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let now = chrono::Utc::now().timestamp_millis();
+    assert!(
+        ts < far_future,
+        "absurd future ts must be clamped, got {ts}"
+    );
+    assert!(
+        ts <= now + 24 * 60 * 60 * 1000 + 5_000,
+        "clamped ts should sit within ~1 day of now, got {ts}"
+    );
 }

@@ -58,6 +58,12 @@ pub const MAX_EVENT_NAME: usize = 64;
 pub const MAX_UTM: usize = 128;
 pub const MAX_VID: usize = 64;
 
+/// Client `ts` is not trusted for range bucketing. Absurd values (clock skew,
+/// spoofing) are clamped into a sane window around the server clock so one
+/// client can't poison the time series with year-3000 (or epoch-0) rows.
+pub const TS_MAX_FUTURE_MS: i64 = 24 * 60 * 60 * 1000;
+pub const TS_MAX_PAST_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+
 /// UTM campaign tags parsed from the landing URL query string (pageview only).
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Utm {
@@ -148,13 +154,15 @@ impl RawPayload {
         }
     }
 
-    pub fn event_type(&self) -> &'static str {
-        match self {
-            RawPayload::Pageview { .. } => "pageview",
-            RawPayload::Event { .. } => "event",
-            RawPayload::Performance { .. } => "performance",
-            RawPayload::Pageleave { .. } => "pageleave",
-        }
+    /// Pin the client timestamp into `[now - TS_MAX_PAST_MS, now + TS_MAX_FUTURE_MS]`.
+    pub fn clamp_ts(&mut self, now_ms: i64) {
+        let ts = match self {
+            RawPayload::Pageview { ts, .. }
+            | RawPayload::Event { ts, .. }
+            | RawPayload::Performance { ts, .. }
+            | RawPayload::Pageleave { ts, .. } => ts,
+        };
+        *ts = (*ts).clamp(now_ms - TS_MAX_PAST_MS, now_ms + TS_MAX_FUTURE_MS);
     }
 }
 

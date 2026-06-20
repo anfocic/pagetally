@@ -50,10 +50,10 @@ pub async fn current_salt(
     let n = stored.len().min(32);
     salt[..n].copy_from_slice(&stored[..n]);
 
-    // Opportunistic cleanup: drop salts older than 2 days so a rotated salt can
-    // never be used to re-link historical hashes.
+    // Opportunistic cleanup: keep only today and yesterday, so a rotated salt is
+    // gone within ~48h and can never be used to re-link historical hashes.
     let _ = sqlx::query("DELETE FROM daily_salts WHERE day < $1")
-        .bind(today - chrono::Duration::days(2))
+        .bind(today - chrono::Duration::days(1))
         .execute(pool)
         .await;
 

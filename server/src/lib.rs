@@ -15,6 +15,7 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::routing::{get, post};
 use axum_prometheus::PrometheusMetricLayer;
+use sha2::{Digest, Sha256};
 use state::AppState;
 use std::sync::Arc;
 use std::time::Duration;
@@ -78,15 +79,29 @@ pub fn router(state: AppState) -> Router {
     const PUBLIC_BODY_LIMIT: usize = 16 * 1024;
 
     // /collect: high volume, generous limit. burst absorbs SPA navigations
-    // that fire pageleave + pageview close together.
+    // that fire pageleave + pageview close together. 500ms replenish period =
+    // ~120/min sustained once the burst is spent.
     let collect_governor = Arc::new(
         GovernorConfigBuilder::default()
-            .per_second(2)
+            .per_millisecond(500)
             .burst_size(60)
             .key_extractor(SmartIpKeyExtractor)
             .finish()
             .expect("collect rate-limit config is valid"),
     );
+    // tower_governor's keyed store never evicts on its own; without this the
+    // per-IP map grows without bound — a memory-exhaustion DoS under IP churn or
+    // spoofed `x-forwarded-for`. Periodically drop fully-replenished entries.
+    {
+        let limiter = collect_governor.limiter().clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                tick.tick().await;
+                limiter.retain_recent();
+            }
+        });
+    }
 
     // /contact: low volume, strict. 5/min steady, burst 3.
     let contact_governor = Arc::new(
@@ -97,6 +112,16 @@ pub fn router(state: AppState) -> Router {
             .finish()
             .expect("contact rate-limit config is valid"),
     );
+    {
+        let limiter = contact_governor.limiter().clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                tick.tick().await;
+                limiter.retain_recent();
+            }
+        });
+    }
 
     let collect_route = Router::new()
         .route("/collect", post(ingest::collect))
@@ -192,10 +217,13 @@ async fn require_admin(
     }
 }
 
+/// Constant-time token comparison. Both sides are hashed to a fixed-width
+/// digest first, so the comparison leaks neither the contents nor the length of
+/// the expected token (the previous length check returned early on a mismatch,
+/// revealing the correct token length via timing).
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
+    let a = Sha256::digest(a);
+    let b = Sha256::digest(b);
     let mut diff = 0u8;
     for (x, y) in a.iter().zip(b.iter()) {
         diff |= x ^ y;
