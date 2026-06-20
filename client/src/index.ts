@@ -18,12 +18,22 @@ export type { AnalyticsConfig, Payload, PerformanceMetrics } from './types'
 
 const INSTANCE_KEY = '__pagetally_active__'
 
+// Ephemeral per-view id: regenerated on every page view, kept only in memory,
+// never persisted. Groups the events of a single pageload without being a
+// durable visitor identity.
+function newViewId(): string {
+  const c = globalThis.crypto
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID()
+  return Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10)
+}
+
 export class Analytics {
   private config: Required<AnalyticsConfig>
   private cleanups: (() => void)[] = []
   private stopped = false
   private engagement: Engagement | null = null
   private scroll: ScrollTracker | null = null
+  private currentViewId = ''
   private lastViewPath = ''
   private lastViewTime = 0
 
@@ -76,7 +86,9 @@ export class Analytics {
 
   private _send(payload: Omit<Payload, 's'>): void {
     if (this.stopped) return
-    sendPayload({ ...payload, s: this.config.siteId } as Payload, this.config.endpoint)
+    const full = { ...payload, s: this.config.siteId } as Payload
+    if (this.currentViewId) full.vid = this.currentViewId
+    sendPayload(full, this.config.endpoint)
   }
 
   private _startAutoTracking(): void {
@@ -107,7 +119,8 @@ export class Analytics {
       if (next === this.lastViewPath && now - this.lastViewTime < 500) return
       this.lastViewPath = next
       this.lastViewTime = now
-      eng.flush()
+      eng.flush() // emits the outgoing page's pageleave under the old view id
+      this.currentViewId = newViewId()
       this._send(buildPageViewPayload(next))
       eng.reset(next)
       this.scroll?.reset()
@@ -157,6 +170,7 @@ export class Analytics {
     if (this.stopped) return
     this.engagement?.flush()
     const next = path ?? getPath()
+    this.currentViewId = newViewId()
     this._send(buildPageViewPayload(next))
     this.engagement?.reset(next)
     this.scroll?.reset()

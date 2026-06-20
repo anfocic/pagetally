@@ -36,4 +36,5 @@ export interface Payload {
   pf?: PerformanceMetrics
   dur?: number
   u?: Campaign
+  vid?: string
 }

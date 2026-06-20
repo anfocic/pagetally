@@ -405,6 +405,46 @@ async fn stats_events_lists_names_and_breaks_down_by_prop(pool: PgPool) {
 }
 
 #[sqlx::test]
+async fn collect_round_trips_view_id(pool: PgPool) {
+    let app = router(test_state(pool.clone(), None, None));
+    let resp = app
+        .oneshot(post_collect(json!({
+            "t": "pageview",
+            "s": "site-1",
+            "p": "/",
+            "ts": 1_700_000_000_000_i64,
+            "vid": "abc123view"
+        })))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    wait_for_count(&pool, 1).await;
+    let vid: Option<String> =
+        sqlx::query_scalar("SELECT view_id FROM analytics_events WHERE type = 'pageview' LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(vid.as_deref(), Some("abc123view"));
+}
+
+#[sqlx::test]
+async fn collect_rejects_oversize_vid(pool: PgPool) {
+    let app = router(test_state(pool.clone(), None, None));
+    let resp = app
+        .oneshot(post_collect(json!({
+            "t": "event",
+            "s": "site-1",
+            "p": "/",
+            "ts": 1_700_000_000_000_i64,
+            "n": "x",
+            "vid": "v".repeat(100)
+        })))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[sqlx::test]
 async fn pageleave_dur_is_clamped(pool: PgPool) {
     let app = router(test_state(pool.clone(), None, None));
     let resp = app
