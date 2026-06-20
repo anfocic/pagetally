@@ -5,12 +5,12 @@ export interface ScrollTracker {
   stop(): void
 }
 
-function scheduleFrame(cb: () => void): void {
+function scheduleFrame(cb: () => void): number {
   if (typeof requestAnimationFrame === 'function') {
-    requestAnimationFrame(cb)
-  } else {
-    cb()
+    return requestAnimationFrame(cb)
   }
+  cb()
+  return -1
 }
 
 function docHeight(): number {
@@ -31,9 +31,11 @@ function docHeight(): number {
 export function startScrollTracking(emit: (pct: number) => void): ScrollTracker {
   let fired = new Set<number>()
   let scheduled = false
+  let rafId = -1
 
   const measure = () => {
     scheduled = false
+    rafId = -1
     const dh = docHeight()
     if (dh <= 0) return
     const depth = (window.scrollY + window.innerHeight) / dh
@@ -49,7 +51,15 @@ export function startScrollTracking(emit: (pct: number) => void): ScrollTracker 
   const onScroll = () => {
     if (scheduled) return
     scheduled = true
-    scheduleFrame(measure)
+    rafId = scheduleFrame(measure)
+  }
+
+  const cancelPending = () => {
+    if (rafId !== -1 && typeof cancelAnimationFrame === 'function') {
+      cancelAnimationFrame(rafId)
+    }
+    rafId = -1
+    scheduled = false
   }
 
   window.addEventListener('scroll', onScroll, { passive: true })
@@ -61,11 +71,15 @@ export function startScrollTracking(emit: (pct: number) => void): ScrollTracker 
     // SPA route change: forget which milestones fired. We deliberately do not
     // re-measure here — at reset time the new page may not be laid out and the
     // scroll position may still be the old page's, which would fire bogus
-    // milestones. The next real scroll measures against the new page.
+    // milestones. The next real scroll measures against the new page. Cancel any
+    // rAF measure queued by a scroll just before the navigation for the same
+    // reason — it would run against the outgoing page and emit on the new view.
     reset() {
+      cancelPending()
       fired = new Set()
     },
     stop() {
+      cancelPending()
       window.removeEventListener('scroll', onScroll)
     },
   }
