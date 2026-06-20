@@ -52,7 +52,10 @@ pub fn router(state: AppState) -> Router {
         .allow_headers(Any);
 
     let cors_stats = match state.config.stats_origins.as_ref() {
-        Some(origins) if !origins.is_empty() => {
+        // A literal "*" means "any origin" and must use `Any` — tower-http panics
+        // if a wildcard is passed inside `allow_origin(<list>)`. Mixed lists
+        // containing "*" also collapse to "any".
+        Some(origins) if !origins.is_empty() && !origins.iter().any(|o| o == "*") => {
             let parsed: Vec<HeaderValue> = origins
                 .iter()
                 .filter_map(|o| HeaderValue::from_str(o).ok())

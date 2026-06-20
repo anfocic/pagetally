@@ -1653,3 +1653,35 @@ async fn funnel_rejects_duplicate_steps(pool: PgPool) {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
+
+#[sqlx::test]
+async fn stats_cors_accepts_wildcard_origin(pool: PgPool) {
+    // STATS_ORIGINS="*" must not panic the router. tower-http rejects a wildcard
+    // inside allow_origin(<list>); a literal "*" means "any origin".
+    let state = AppState {
+        config: Arc::new(Config {
+            bind_addr: "0.0.0.0:0".into(),
+            database_url: String::new(),
+            allowed_sites: None,
+            admin_token: None,
+            email: None,
+            contact_to: None,
+            stats_origins: Some(vec!["*".into()]),
+            behind_tls: false,
+            sessions_enabled: false,
+        }),
+        pool,
+        mailer: None,
+        salt_cache: pagetally_server::salt::new_cache(),
+    };
+    let app = router(state);
+    let resp = app
+        .oneshot(
+            Request::get("/stats/summary?site=s&days=1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
