@@ -6,7 +6,7 @@ GDPR-compliant, cookie-free web analytics. Browser client + self-hostable Rust s
 
 | Path | What | Install |
 |---|---|---|
-| `client/` | Browser client (TypeScript) | `npm i pagetally` |
+| `client/` | Browser client (TypeScript) | a `<script>` tag the server hosts, or `npm i pagetally` |
 | `server/` | Ingest + read API (Rust + Postgres) | `cargo install pagetally-server` |
 
 ## Quick start
@@ -25,7 +25,38 @@ Migrations run automatically on startup. **Do not run without `ADMIN_TOKEN`** un
 
 For a one-shot install on a fresh Debian/Ubuntu VM, see [`deploy/install.sh`](deploy/install.sh).
 
-### 2. Embed the client
+### 2. Add the tracking script
+
+**The simple way — one line, no build step.** The server hosts the client at
+`/pt.js`. Drop this into your page `<head>`:
+
+```html
+<script defer src="https://analytics.example.com/pt.js" data-site="my-site"></script>
+```
+
+`data-endpoint` is optional; it defaults to `/collect` on the origin that served
+the script. Opt-ins are `data-*` attributes:
+
+| Attribute | What |
+|---|---|
+| `data-site` | (required) site identifier |
+| `data-endpoint` | `/collect` URL (default: the script's origin + `/collect`) |
+| `data-track-scroll` | emit `scroll_depth` events at 25/50/75/100% |
+| `data-track-outbound` | emit `outbound` / `download` click events |
+| `data-respect-dnt` | send nothing when DNT / GPC is on |
+| `data-auto-track="false"` | disable automatic pageviews |
+
+Fire custom events from inline scripts via the global the tag exposes:
+
+```js
+window.pagetally.track("signup", { plan: "pro" });
+window.pagetally.page("/virtual-path");
+```
+
+See [`examples/script-tag.html`](examples/script-tag.html).
+
+**Advanced — npm package.** For bundled apps (SPAs) that prefer to import and
+control the instance directly:
 
 ```bash
 npm i pagetally
@@ -41,8 +72,6 @@ new Analytics({
 });
 ```
 
-Client options:
-
 | Option | Default | What |
 |---|---|---|
 | `siteId` | — (required) | Site identifier sent with every event |
@@ -52,7 +81,10 @@ Client options:
 | `trackScroll` | `false` | Emit `scroll_depth` events at 25/50/75/100% |
 | `trackOutboundLinks` | `false` | Emit `outbound` / `download` events on link clicks |
 
-UTM tags (`utm_source` / `utm_medium` / `utm_campaign`) on the landing URL are always captured and attached to the pageview — no flag needed.
+Both paths send the identical wire payload and run the same tracking code; the
+`<script>` tag is the same client, just hosted by the server and configured from
+attributes. UTM tags (`utm_source` / `utm_medium` / `utm_campaign`) on the
+landing URL are always captured and attached to the pageview — no flag needed.
 
 ### 3. Read stats
 

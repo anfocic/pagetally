@@ -14,6 +14,7 @@ use axum::Router;
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
+use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum_prometheus::PrometheusMetricLayer;
 use sha2::{Digest, Sha256};
@@ -152,6 +153,7 @@ pub fn router(state: AppState) -> Router {
     let mut app = Router::new()
         .merge(public_routes)
         .route("/health", get(health))
+        .route("/pt.js", get(serve_script))
         .merge(stats_routes)
         .with_state(state.clone());
 
@@ -240,4 +242,22 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 
 async fn health() -> &'static str {
     "ok"
+}
+
+/// The browser tracking client, embedded at build time (see build.rs). Served so
+/// adopters can drop in a single `<script src="…/pt.js" data-site="…">` tag with
+/// no npm install or build step.
+const SCRIPT_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/pt.js"));
+
+async fn serve_script() -> impl IntoResponse {
+    (
+        [
+            (
+                header::CONTENT_TYPE,
+                "application/javascript; charset=utf-8",
+            ),
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        SCRIPT_JS,
+    )
 }
