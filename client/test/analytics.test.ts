@@ -218,6 +218,62 @@ describe('Analytics', () => {
     })
   })
 
+  describe('view id (vid)', () => {
+    beforeEach(() => {
+      Object.defineProperty(document, 'visibilityState', {
+        value: 'visible',
+        configurable: true,
+      })
+    })
+
+    it('shares one vid across pageview, event, and pageleave within a view', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+      const spy = vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
+      const a = new Analytics({ endpoint: ENDPOINT, siteId: SITE_ID, autoTrack: true })
+
+      vi.advanceTimersByTime(2000)
+      a.track('cta_click')
+      window.dispatchEvent(new Event('pagehide'))
+
+      const all = await Promise.all(spy.mock.calls.map((c) => getPayloadFromCall(c)))
+      const pv = all.find((p) => p.t === 'pageview')!
+      const ev = all.find((p) => p.t === 'event')!
+      const leave = all.find((p) => p.t === 'pageleave')!
+      expect(typeof pv.vid).toBe('string')
+      expect(pv.vid).toBeTruthy()
+      expect(ev.vid).toBe(pv.vid)
+      expect(leave.vid).toBe(pv.vid)
+
+      a.stop()
+      vi.useRealTimers()
+    })
+
+    it('regenerates vid on SPA nav; the outgoing pageleave keeps the old vid', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+      history.replaceState({}, '', '/start')
+      const spy = vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
+      const a = new Analytics({ endpoint: ENDPOINT, siteId: SITE_ID, autoTrack: true })
+
+      const firstPv = await getPayloadFromCall(spy.mock.calls[0]!)
+      const vid1 = firstPv.vid as string
+
+      vi.advanceTimersByTime(2500)
+      history.pushState({}, '', '/next')
+
+      const all = await Promise.all(spy.mock.calls.map((c) => getPayloadFromCall(c)))
+      const leave = all.find((p) => p.t === 'pageleave' && p.p === '/start')!
+      const nextPv = all.find((p) => p.t === 'pageview' && p.p === '/next')!
+      expect(leave.vid).toBe(vid1)
+      expect(nextPv.vid).toBeTruthy()
+      expect(nextPv.vid).not.toBe(vid1)
+
+      a.stop()
+      vi.useRealTimers()
+    })
+  })
+
   describe('stop()', () => {
     it('cleans up and prevents further tracking', () => {
       const spy = vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)

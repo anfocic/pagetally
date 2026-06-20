@@ -17,6 +17,8 @@ pub enum RawPayload {
         v: Option<i32>,
         #[serde(default)]
         u: Option<Utm>,
+        #[serde(default)]
+        vid: Option<String>,
     },
     #[serde(rename = "event")]
     Event {
@@ -26,6 +28,8 @@ pub enum RawPayload {
         n: String,
         #[serde(default)]
         pr: Option<HashMap<String, serde_json::Value>>,
+        #[serde(default)]
+        vid: Option<String>,
     },
     #[serde(rename = "performance")]
     Performance {
@@ -33,6 +37,8 @@ pub enum RawPayload {
         p: String,
         ts: i64,
         pf: PerformanceMetrics,
+        #[serde(default)]
+        vid: Option<String>,
     },
     #[serde(rename = "pageleave")]
     Pageleave {
@@ -40,6 +46,8 @@ pub enum RawPayload {
         p: String,
         ts: i64,
         dur: i32,
+        #[serde(default)]
+        vid: Option<String>,
     },
 }
 
@@ -48,6 +56,7 @@ pub const MAX_PATH: usize = 2048;
 pub const MAX_REFERRER: usize = 253;
 pub const MAX_EVENT_NAME: usize = 64;
 pub const MAX_UTM: usize = 128;
+pub const MAX_VID: usize = 64;
 
 /// UTM campaign tags parsed from the landing URL query string (pageview only).
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -97,6 +106,11 @@ impl RawPayload {
         {
             return Err("invalid event name");
         }
+        if let Some(vid) = self.vid()
+            && vid.len() > MAX_VID
+        {
+            return Err("invalid vid");
+        }
         if let RawPayload::Performance { pf, .. } = self {
             // Postgres percentile_cont chokes on NaN; drop non-finite values.
             for v in [
@@ -125,6 +139,15 @@ impl RawPayload {
         }
     }
 
+    pub fn vid(&self) -> Option<&str> {
+        match self {
+            RawPayload::Pageview { vid, .. }
+            | RawPayload::Event { vid, .. }
+            | RawPayload::Performance { vid, .. }
+            | RawPayload::Pageleave { vid, .. } => vid.as_deref(),
+        }
+    }
+
     pub fn event_type(&self) -> &'static str {
         match self {
             RawPayload::Pageview { .. } => "pageview",
@@ -148,6 +171,7 @@ mod tests {
             d: None,
             v: None,
             u: None,
+            vid: None,
         }
     }
 
@@ -193,6 +217,7 @@ mod tests {
             ts: 0,
             n: "".into(),
             pr: None,
+            vid: None,
         };
         assert!(p.validate().is_err());
     }
@@ -205,6 +230,7 @@ mod tests {
             ts: 0,
             n: "n".repeat(MAX_EVENT_NAME + 1),
             pr: None,
+            vid: None,
         };
         assert!(p.validate().is_err());
     }
@@ -222,6 +248,7 @@ mod tests {
                 inp: Some(f64::NEG_INFINITY),
                 ttfb: None,
             },
+            vid: None,
         };
         p.validate().unwrap();
         if let RawPayload::Performance { pf, .. } = p {

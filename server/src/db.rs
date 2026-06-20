@@ -44,6 +44,7 @@ pub async fn insert_event(
             d,
             v,
             u,
+            vid: _,
         } => (
             s.as_str(),
             "pageview",
@@ -58,7 +59,14 @@ pub async fn insert_event(
             None,
             u.as_ref(),
         ),
-        RawPayload::Event { s, p, ts, n, pr } => (
+        RawPayload::Event {
+            s,
+            p,
+            ts,
+            n,
+            pr,
+            vid: _,
+        } => (
             s.as_str(),
             "event",
             p.as_str(),
@@ -72,7 +80,13 @@ pub async fn insert_event(
             None,
             None,
         ),
-        RawPayload::Performance { s, p, ts, pf } => (
+        RawPayload::Performance {
+            s,
+            p,
+            ts,
+            pf,
+            vid: _,
+        } => (
             s.as_str(),
             "performance",
             p.as_str(),
@@ -86,7 +100,13 @@ pub async fn insert_event(
             None,
             None,
         ),
-        RawPayload::Pageleave { s, p, ts, dur } => (
+        RawPayload::Pageleave {
+            s,
+            p,
+            ts,
+            dur,
+            vid: _,
+        } => (
             s.as_str(),
             "pageleave",
             p.as_str(),
@@ -109,8 +129,8 @@ pub async fn insert_event(
 
     sqlx::query(
         "INSERT INTO analytics_events
-            (site_id, type, path, ts, referrer, device, viewport, event_name, event_props, metrics, country, dur_ms, utm_source, utm_medium, utm_campaign)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
+            (site_id, type, path, ts, referrer, device, viewport, event_name, event_props, metrics, country, dur_ms, utm_source, utm_medium, utm_campaign, view_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
     )
     .bind(site_id)
     .bind(kind)
@@ -127,6 +147,7 @@ pub async fn insert_event(
     .bind(utm_source)
     .bind(utm_medium)
     .bind(utm_campaign)
+    .bind(payload.vid())
     .execute(pool)
     .await?;
     Ok(())
