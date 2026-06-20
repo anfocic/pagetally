@@ -1,4 +1,5 @@
-FROM rust:1.83-slim AS build
+# Rust 1.88+: the crate uses edition 2024 (>=1.85) and let-chains (>=1.88).
+FROM rust:1.88-slim AS build
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev ca-certificates \
