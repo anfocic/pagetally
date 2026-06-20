@@ -21,6 +21,9 @@ pub async fn insert_event(
     pool: &PgPool,
     payload: &RawPayload,
     country: Option<&str>,
+    visitor_hash: Option<&str>,
+    browser: Option<&str>,
+    os: Option<&str>,
 ) -> sqlx::Result<()> {
     let (
         site_id,
@@ -129,8 +132,8 @@ pub async fn insert_event(
 
     sqlx::query(
         "INSERT INTO analytics_events
-            (site_id, type, path, ts, referrer, device, viewport, event_name, event_props, metrics, country, dur_ms, utm_source, utm_medium, utm_campaign, view_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
+            (site_id, type, path, ts, referrer, device, viewport, event_name, event_props, metrics, country, dur_ms, utm_source, utm_medium, utm_campaign, view_id, visitor_hash, browser, os)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)",
     )
     .bind(site_id)
     .bind(kind)
@@ -148,6 +151,9 @@ pub async fn insert_event(
     .bind(utm_medium)
     .bind(utm_campaign)
     .bind(payload.vid())
+    .bind(visitor_hash)
+    .bind(browser)
+    .bind(os)
     .execute(pool)
     .await?;
     Ok(())
@@ -164,11 +170,24 @@ pub async fn summary(
             COUNT(*) FILTER (WHERE type = 'pageview')::bigint AS pageviews,
             COUNT(*) FILTER (WHERE type = 'event')::bigint     AS events,
             (AVG(dur_ms) FILTER (WHERE type = 'pageleave'))::float8 AS avg_time_on_page_ms,
+            NULLIF(
+              COUNT(DISTINCT visitor_hash) FILTER (WHERE type = 'pageview' AND visitor_hash IS NOT NULL),
+              0
+            )::bigint AS unique_visitors,
             (
               SELECT path FROM analytics_events
                WHERE site_id = $1 AND ts BETWEEN $2 AND $3 AND type = 'pageview'
                GROUP BY path ORDER BY COUNT(*) DESC LIMIT 1
-            ) AS top_path
+            ) AS top_path,
+            (
+              SELECT AVG((pv = 1)::int)::float8 FROM (
+                SELECT COUNT(*) AS pv
+                  FROM analytics_events
+                 WHERE site_id = $1 AND ts BETWEEN $2 AND $3
+                       AND type = 'pageview' AND visitor_hash IS NOT NULL
+                 GROUP BY visitor_hash, date_trunc('day', to_timestamp(ts / 1000.0))
+              ) sessions
+            ) AS bounce_rate
          FROM analytics_events
          WHERE site_id = $1 AND ts BETWEEN $2 AND $3",
     )
@@ -186,6 +205,11 @@ pub async fn summary(
             .try_get::<Option<f64>, _>("avg_time_on_page_ms")
             .ok()
             .flatten(),
+        unique_visitors: row
+            .try_get::<Option<i64>, _>("unique_visitors")
+            .ok()
+            .flatten(),
+        bounce_rate: row.try_get::<Option<f64>, _>("bounce_rate").ok().flatten(),
     })
 }
 

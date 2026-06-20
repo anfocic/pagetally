@@ -64,9 +64,9 @@ GET /stats/events?site=my-site&name=scroll_depth&by=pct
 GET /stats/vitals?site=my-site&days=30
 ```
 
-`top?dim=path` returns `avgDurMs` per path. `summary` returns `avgTimeOnPageMs`.
+`top?dim=path` returns `avgDurMs` per path. `summary` returns `avgTimeOnPageMs`. With sessions enabled (see below), `summary` also returns `uniqueVisitors` and `bounceRate`.
 
-`top` dimensions: `path`, `referrer`, `country`, `device`, `utm_source`, `utm_medium`, `utm_campaign`.
+`top` dimensions: `path`, `referrer`, `country`, `device`, `utm_source`, `utm_medium`, `utm_campaign`, and (sessions only) `browser`, `os`.
 
 `events` returns the top event names for a site; add `name=<event>&by=<prop>` to get the distribution of one event's prop value (e.g. scroll-depth milestones).
 
@@ -77,7 +77,12 @@ GET /stats/vitals?site=my-site&days=30
 - Web vitals (LCP, FCP, CLS, INP, TTFB)
 - **Time on page** — visible duration only. The client never measures while the tab is hidden, and stops at 30 minutes per page.
 
-No cookies, no fingerprinting, no IP storage. The browser client is ~3 KB gzipped.
+Optional, only when `SESSIONS_ENABLED=1` (off by default):
+
+- Unique visitors, sessions, bounce rate
+- Browser + OS *family* (e.g. "Chrome / macOS", never versions)
+
+**Privacy:** no cookies, no fingerprinting, **no raw IP storage — ever.** With sessions **off** (the default) the server reads neither the client IP nor the User-Agent. With sessions **on**, the IP and User-Agent are combined with a daily-rotating salt into an anonymized hash and immediately discarded; the salt is deleted after 48h, making old hashes permanently unlinkable. The browser client is ~3 KB gzipped.
 
 ## Configuration
 
@@ -95,6 +100,7 @@ Server env vars:
 | `CONTACT_TO` | no | (disables `/contact`) |
 | `STATS_ORIGINS` | no | `*` (any origin) |
 | `BEHIND_TLS` | no | `false` (disables HSTS) |
+| `SESSIONS_ENABLED` | no | `false` (no IP/UA processing; opt-in for unique visitors, sessions, bounce rate, browser/OS) |
 | `LOG_FORMAT` | no | `text` (set `json` for structured logs) |
 | `RUST_LOG` | no | `info,sqlx=warn` |
 

@@ -13,6 +13,15 @@ fn test_state(
     admin_token: Option<&str>,
     allowed_sites: Option<Vec<String>>,
 ) -> AppState {
+    state_with(pool, admin_token, allowed_sites, false)
+}
+
+fn state_with(
+    pool: PgPool,
+    admin_token: Option<&str>,
+    allowed_sites: Option<Vec<String>>,
+    sessions_enabled: bool,
+) -> AppState {
     AppState {
         config: Arc::new(Config {
             bind_addr: "0.0.0.0:0".into(),
@@ -23,9 +32,11 @@ fn test_state(
             contact_to: None,
             stats_origins: None,
             behind_tls: false,
+            sessions_enabled,
         }),
         pool,
         mailer: None,
+        salt_cache: pagetally_server::salt::new_cache(),
     }
 }
 
@@ -36,6 +47,20 @@ fn post_collect(body: Value) -> Request<Body> {
         .header(header::CONTENT_TYPE, "application/json")
         // SmartIpKeyExtractor needs an IP source; provide one explicitly.
         .header("x-forwarded-for", "10.0.0.1")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+const CHROME_WIN: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
+     (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+fn post_collect_ua(body: Value, ip: &str, ua: &str) -> Request<Body> {
+    Request::builder()
+        .uri("/collect")
+        .method("POST")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("x-forwarded-for", ip)
+        .header(header::USER_AGENT, ua)
         .body(Body::from(body.to_string()))
         .unwrap()
 }
@@ -442,6 +467,169 @@ async fn collect_rejects_oversize_vid(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[sqlx::test]
+async fn sessions_disabled_stores_no_visitor_data(pool: PgPool) {
+    // Default config: even with IP + UA present, nothing is derived.
+    let app = router(test_state(pool.clone(), None, None));
+    let resp = app
+        .oneshot(post_collect_ua(
+            json!({"t": "pageview", "s": "site-1", "p": "/", "ts": 1_700_000_000_000_i64}),
+            "203.0.113.5",
+            CHROME_WIN,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    wait_for_count(&pool, 1).await;
+    let (vh, br, os): (Option<String>, Option<String>, Option<String>) =
+        sqlx::query_as("SELECT visitor_hash, browser, os FROM analytics_events LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(vh, None);
+    assert_eq!(br, None);
+    assert_eq!(os, None);
+}
+
+#[sqlx::test]
+async fn sessions_enabled_records_visitor_hash_and_ua(pool: PgPool) {
+    let app = router(state_with(pool.clone(), None, None, true));
+    let resp = app
+        .oneshot(post_collect_ua(
+            json!({"t": "pageview", "s": "site-1", "p": "/", "ts": 1_700_000_000_000_i64}),
+            "203.0.113.5",
+            CHROME_WIN,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    wait_for_count(&pool, 1).await;
+    let (vh, br, os): (Option<String>, Option<String>, Option<String>) =
+        sqlx::query_as("SELECT visitor_hash, browser, os FROM analytics_events LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(vh.as_ref().map(|s| s.len()), Some(18));
+    assert_eq!(br.as_deref(), Some("Chrome"));
+    assert_eq!(os.as_deref(), Some("Windows"));
+}
+
+#[sqlx::test]
+async fn summary_reports_unique_visitors_and_bounce_rate_when_enabled(pool: PgPool) {
+    let app = router(state_with(pool.clone(), None, None, true));
+    let now_ms = chrono::Utc::now().timestamp_millis();
+
+    // Visitor A (one IP): two pageviews → not a bounce.
+    for _ in 0..2 {
+        app.clone()
+            .oneshot(post_collect_ua(
+                json!({"t": "pageview", "s": "s", "p": "/a", "ts": now_ms}),
+                "1.1.1.1",
+                CHROME_WIN,
+            ))
+            .await
+            .unwrap();
+    }
+    // Visitor B (different IP): one pageview → a bounce.
+    app.clone()
+        .oneshot(post_collect_ua(
+            json!({"t": "pageview", "s": "s", "p": "/b", "ts": now_ms}),
+            "2.2.2.2",
+            CHROME_WIN,
+        ))
+        .await
+        .unwrap();
+    wait_for_count(&pool, 3).await;
+
+    let resp = app
+        .oneshot(
+            Request::get("/stats/summary?site=s&days=365")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    assert_eq!(body["uniqueVisitors"], 2);
+    assert_eq!(body["bounceRate"], 0.5);
+}
+
+#[sqlx::test]
+async fn summary_omits_session_metrics_when_disabled(pool: PgPool) {
+    let app = router(test_state(pool.clone(), None, None));
+    app.clone()
+        .oneshot(post_collect(json!({
+            "t": "pageview", "s": "s", "p": "/", "ts": chrono::Utc::now().timestamp_millis()
+        })))
+        .await
+        .unwrap();
+    wait_for_count(&pool, 1).await;
+
+    let resp = app
+        .oneshot(
+            Request::get("/stats/summary?site=s&days=365")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    assert!(body.get("uniqueVisitors").is_none(), "got {body}");
+    assert!(body.get("bounceRate").is_none(), "got {body}");
+}
+
+#[sqlx::test]
+async fn top_breaks_down_by_browser_when_enabled(pool: PgPool) {
+    let app = router(state_with(pool.clone(), None, None, true));
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    app.clone()
+        .oneshot(post_collect_ua(
+            json!({"t": "pageview", "s": "s", "p": "/", "ts": now_ms}),
+            "1.1.1.1",
+            CHROME_WIN,
+        ))
+        .await
+        .unwrap();
+    wait_for_count(&pool, 1).await;
+
+    let resp = app
+        .oneshot(
+            Request::get("/stats/top?site=s&days=365&dim=browser")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    assert_eq!(body[0]["key"], "Chrome");
+    assert_eq!(body[0]["count"], 1);
+}
+
+#[sqlx::test]
+async fn salt_rotates_daily_and_cleans_up_old(pool: PgPool) {
+    use pagetally_server::salt::{current_salt, new_cache};
+    let cache = new_cache();
+    let d1 = chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+    let d2 = chrono::NaiveDate::from_ymd_opt(2026, 1, 2).unwrap();
+    let d5 = chrono::NaiveDate::from_ymd_opt(2026, 1, 5).unwrap();
+
+    let s1 = current_salt(&pool, &cache, d1).await.unwrap();
+    let s1_again = current_salt(&pool, &cache, d1).await.unwrap();
+    assert_eq!(s1, s1_again, "salt is stable within a day");
+
+    let s2 = current_salt(&pool, &cache, d2).await.unwrap();
+    assert_ne!(s1, s2, "salt rotates across days");
+
+    // Advancing to d5 deletes salts older than d3 (d5 - 2), so d1 and d2 go.
+    current_salt(&pool, &cache, d5).await.unwrap();
+    let remaining: Vec<chrono::NaiveDate> =
+        sqlx::query_scalar("SELECT day FROM daily_salts ORDER BY day")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(remaining, vec![d5]);
 }
 
 #[sqlx::test]
