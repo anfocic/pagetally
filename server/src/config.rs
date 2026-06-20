@@ -6,9 +6,11 @@ pub struct Config {
     pub bind_addr: String,
     pub database_url: String,
     pub allowed_sites: Option<Vec<String>>,
-    /// If set, all `/stats/*` requests must present `Authorization: Bearer <token>`.
-    /// If unset, the stats endpoints are open — fine for trusted networks but
-    /// dangerous on the public internet, so the server logs a warning at startup.
+    /// If set, all `/stats/*` requests and the blog write endpoints
+    /// (`POST`/`PATCH`/`DELETE /posts`) must present `Authorization: Bearer <token>`.
+    /// If unset, the stats endpoints are open *and* anyone can create/edit/delete blog
+    /// posts — fine for trusted networks but dangerous on the public internet, so the
+    /// server logs a warning at startup.
     pub admin_token: Option<String>,
     pub email: Option<EmailConfig>,
     /// Recipient for `POST /contact` submissions. Required for the endpoint to
