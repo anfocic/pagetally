@@ -21,6 +21,8 @@ cargo run --release
 
 Migrations run automatically on startup. **Do not run without `ADMIN_TOKEN`** unless the host is on a trusted network — `/stats/*` is open by default and the server logs a warning.
 
+> **Upgrading an existing large table:** the `realtime` index ships as `CREATE INDEX CONCURRENTLY` so the build does not block `/collect` writes. If a build is interrupted Postgres leaves an *invalid* index that the migration then skips — drop it (`DROP INDEX analytics_events_site_received_idx;`) and restart to rebuild.
+
 For a one-shot install on a fresh Debian/Ubuntu VM, see [`deploy/install.sh`](deploy/install.sh).
 
 ### 2. Embed the client
@@ -64,6 +66,8 @@ GET /stats/events?site=my-site&name=scroll_depth&by=pct
 GET /stats/vitals?site=my-site&days=30
 GET /stats/heatmap?site=my-site&days=30&tz=Europe/Dublin
 GET /stats/channels?site=my-site&days=30
+GET /stats/realtime?site=my-site&minutes=5
+GET /stats/engagement?site=my-site&days=30
 ```
 
 `top?dim=path` returns `avgDurMs` and `medianDurMs` per path. `summary` returns `avgTimeOnPageMs`, `medianTimeOnPageMs`, and `p75TimeOnPageMs`. With sessions enabled (see below), `summary` also returns `uniqueVisitors` and `bounceRate`.
@@ -73,6 +77,8 @@ GET /stats/channels?site=my-site&days=30
 - **`vitals`** (site-wide) includes a `distribution` of Core-Web-Vitals pass-rate buckets (`good` / `needsImprovement` / `poor` / `total`) per metric against Google's thresholds. **`vitals?dim=path&limit=N`** instead returns an array of per-path p75s, each with its own per-metric sample count (`lcpN`, `inpN`, … — INP is sparse, so it is reported separately to flag low-confidence p75s).
 - **`heatmap`** returns pageview counts per ISO weekday (1–7) × hour (0–23). `tz` is an optional IANA timezone for the hour bucketing (default `UTC`); an unknown timezone returns 400.
 - **`channels`** groups pageviews into marketing channels (Direct / Organic Search / Social / Paid / Campaign / Referral) from the referrer host + UTM tags. The brand lists are heuristic.
+- **`realtime`** returns `active` — distinct page-visits with any event in the last `minutes` (default 5, clamped 1–60) — plus the top active `pages`. It counts on the server's receive time (not the client clock) and needs no opt-in. Cookie-free, so "active" means page-visits in progress, not logged-in people.
+- **`engagement`** returns per-page-visit engagement (a visit = one `view_id`): `engagedVisitRate` (visible ≥10s OR scrolled ≥50% OR an outbound/download click), `avgEventsPerVisit` (your custom `track()` events; auto scroll/outbound events excluded), and — when the matching client tracking is on — `scrollReach75`, `outboundRate`, and a `scrollFunnel` (25/50/75/100). **`engagement?dim=path&limit=N`** returns the same per path. Scroll/outbound fields are **omitted** (not `0`) when the site emits no such events in range, so "not tracked" never reads as "0% engaged"; `engagedVisitRate` is then a lower bound resting on the time signal alone.
 
 > **Note on `uniqueVisitors`:** the visitor hash is salted with a salt that rotates every UTC day (and is then deleted), so the same person hashes differently each day. Over a multi-day range `uniqueVisitors` therefore counts *visitor-days*, not distinct people — a visitor active on N days counts as N. This is a deliberate consequence of the cookie-free, unlinkable-by-design model. For a per-day figure, query a 1-day range per day.
 

@@ -1037,3 +1037,251 @@ async fn summary_compare_prev_returns_change(pool: PgPool) {
     assert_eq!(body["previous"]["pageviews"], 1);
     assert_eq!(body["change"]["pageviews"], 100.0);
 }
+
+// ---- Tier 2 metrics ----
+
+#[sqlx::test]
+async fn realtime_counts_distinct_active_views(pool: PgPool) {
+    let app = router(test_state(pool.clone(), None, None));
+    let now = chrono::Utc::now().timestamp_millis();
+    // view v1 on /a: a pageview + a scroll event (one visit, two rows).
+    app.clone()
+        .oneshot(post_collect(
+            json!({"t":"pageview","s":"s","p":"/a","ts":now,"vid":"v1"}),
+        ))
+        .await
+        .unwrap();
+    app.clone()
+        .oneshot(post_collect(
+            json!({"t":"event","s":"s","p":"/a","ts":now,"n":"scroll_depth","pr":{"pct":50},"vid":"v1"}),
+        ))
+        .await
+        .unwrap();
+    // view v2 on /b.
+    app.clone()
+        .oneshot(post_collect(
+            json!({"t":"pageview","s":"s","p":"/b","ts":now,"vid":"v2"}),
+        ))
+        .await
+        .unwrap();
+    wait_for_count(&pool, 3).await;
+
+    let resp = app
+        .oneshot(
+            Request::get("/stats/realtime?site=s")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["active"], 2, "two distinct view_ids; got {body}");
+    assert_eq!(body["windowMinutes"], 5);
+    let pages = body["pages"].as_array().unwrap();
+    assert_eq!(pages.len(), 2, "got {body}");
+    // both paths have 1 distinct view; tie broken by key asc.
+    assert_eq!(body["pages"][0]["key"], "/a");
+    assert_eq!(body["pages"][0]["count"], 1);
+}
+
+#[sqlx::test]
+async fn realtime_excludes_rows_outside_window(pool: PgPool) {
+    let app = router(test_state(pool.clone(), None, None));
+    let now = chrono::Utc::now().timestamp_millis();
+    // Fresh row via /collect (received_at defaults to now()).
+    app.clone()
+        .oneshot(post_collect(
+            json!({"t":"pageview","s":"s","p":"/","ts":now,"vid":"fresh"}),
+        ))
+        .await
+        .unwrap();
+    wait_for_count(&pool, 1).await;
+    // Old row: received_at can't be set through /collect, so insert it directly.
+    sqlx::query(
+        "INSERT INTO analytics_events (site_id, type, path, ts, view_id, received_at)
+         VALUES ($1, 'pageview', '/old', $2, 'old', now() - interval '10 minutes')",
+    )
+    .bind("s")
+    .bind(now)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let resp = app
+        .oneshot(
+            Request::get("/stats/realtime?site=s&minutes=5")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    assert_eq!(
+        body["active"], 1,
+        "only the fresh view is within 5 min; got {body}"
+    );
+}
+
+#[sqlx::test]
+async fn engagement_reports_rates(pool: PgPool) {
+    let app = router(test_state(pool.clone(), None, None));
+    let now = chrono::Utc::now().timestamp_millis();
+    // Visit v1 on /a: scrolled 75, an outbound click, 15s dwell -> engaged.
+    for ev in [
+        json!({"t":"pageview","s":"s","p":"/a","ts":now,"vid":"v1"}),
+        json!({"t":"event","s":"s","p":"/a","ts":now,"n":"scroll_depth","pr":{"pct":75},"vid":"v1"}),
+        json!({"t":"event","s":"s","p":"/a","ts":now,"n":"outbound","pr":{"href":"example.com"},"vid":"v1"}),
+        json!({"t":"pageleave","s":"s","p":"/a","ts":now,"dur":15000,"vid":"v1"}),
+        // Visit v2 on /a: pageview only -> not engaged.
+        json!({"t":"pageview","s":"s","p":"/a","ts":now,"vid":"v2"}),
+    ] {
+        app.clone().oneshot(post_collect(ev)).await.unwrap();
+    }
+    wait_for_count(&pool, 5).await;
+
+    let resp = app
+        .oneshot(
+            Request::get("/stats/engagement?site=s&days=365")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["visits"], 2, "got {body}");
+    assert_eq!(body["engagedVisitRate"], 0.5, "got {body}");
+    assert_eq!(body["scrollReach75"], 0.5);
+    assert_eq!(body["outboundRate"], 0.5);
+    // scroll_depth + outbound are auto-instrumentation -> excluded from events/visit.
+    assert_eq!(body["avgEventsPerVisit"], 0.0, "got {body}");
+    assert_eq!(body["scrollFunnel"]["25"], 0.5);
+    assert_eq!(body["scrollFunnel"]["75"], 0.5);
+    assert_eq!(body["scrollFunnel"]["100"], 0.0);
+}
+
+#[sqlx::test]
+async fn engagement_omits_untracked_scroll_and_outbound(pool: PgPool) {
+    let app = router(test_state(pool.clone(), None, None));
+    let now = chrono::Utc::now().timestamp_millis();
+    // Plain visit: pageview + a 20s dwell, no scroll/outbound rows at all.
+    app.clone()
+        .oneshot(post_collect(
+            json!({"t":"pageview","s":"s","p":"/a","ts":now,"vid":"v1"}),
+        ))
+        .await
+        .unwrap();
+    app.clone()
+        .oneshot(post_collect(
+            json!({"t":"pageleave","s":"s","p":"/a","ts":now,"dur":20000,"vid":"v1"}),
+        ))
+        .await
+        .unwrap();
+    wait_for_count(&pool, 2).await;
+
+    let resp = app
+        .oneshot(
+            Request::get("/stats/engagement?site=s&days=365")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    assert_eq!(body["visits"], 1, "got {body}");
+    assert_eq!(
+        body["engagedVisitRate"], 1.0,
+        "engaged via 20s dwell; got {body}"
+    );
+    assert!(
+        body.get("scrollReach75").is_none(),
+        "scroll not tracked => omitted; got {body}"
+    );
+    assert!(
+        body.get("outboundRate").is_none(),
+        "outbound not tracked => omitted; got {body}"
+    );
+    assert!(body.get("scrollFunnel").is_none(), "got {body}");
+}
+
+#[sqlx::test]
+async fn engagement_by_path_gates_scroll_site_wide(pool: PgPool) {
+    let app = router(test_state(pool.clone(), None, None));
+    let now = chrono::Utc::now().timestamp_millis();
+    // /a: an engaged visit that scrolled to 100%.
+    app.clone()
+        .oneshot(post_collect(
+            json!({"t":"pageview","s":"s","p":"/a","ts":now,"vid":"a1"}),
+        ))
+        .await
+        .unwrap();
+    app.clone()
+        .oneshot(post_collect(
+            json!({"t":"event","s":"s","p":"/a","ts":now,"n":"scroll_depth","pr":{"pct":100},"vid":"a1"}),
+        ))
+        .await
+        .unwrap();
+    // /b: a pageview-only visit (no scroll), but the site DOES track scroll.
+    app.clone()
+        .oneshot(post_collect(
+            json!({"t":"pageview","s":"s","p":"/b","ts":now,"vid":"b1"}),
+        ))
+        .await
+        .unwrap();
+    wait_for_count(&pool, 3).await;
+
+    let resp = app
+        .oneshot(
+            Request::get("/stats/engagement?site=s&days=365&dim=path")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body.as_array().unwrap().len(), 2, "got {body}");
+    // Tie on visits (1 each) -> key asc -> /a then /b.
+    assert_eq!(body[0]["key"], "/a");
+    assert_eq!(body[0]["engagedVisitRate"], 1.0);
+    assert_eq!(
+        body[0]["scrollReach75"], 1.0,
+        "reached 100 >= 75; got {body}"
+    );
+    assert_eq!(body[1]["key"], "/b");
+    assert_eq!(body[1]["engagedVisitRate"], 0.0);
+    // /b had no scroll, but the site tracks scroll -> 0.0, NOT omitted.
+    assert_eq!(body[1]["scrollReach75"], 0.0, "got {body}");
+    // No outbound anywhere on the site -> omitted on every row.
+    assert!(body[0].get("outboundRate").is_none(), "got {body}");
+}
+
+#[sqlx::test]
+async fn engagement_events_per_visit_excludes_auto_instrumentation(pool: PgPool) {
+    let app = router(test_state(pool.clone(), None, None));
+    let now = chrono::Utc::now().timestamp_millis();
+    // One visit: a custom `track` event plus auto scroll + outbound rows.
+    for ev in [
+        json!({"t":"pageview","s":"s","p":"/a","ts":now,"vid":"v1"}),
+        json!({"t":"event","s":"s","p":"/a","ts":now,"n":"signup","vid":"v1"}),
+        json!({"t":"event","s":"s","p":"/a","ts":now,"n":"scroll_depth","pr":{"pct":50},"vid":"v1"}),
+        json!({"t":"event","s":"s","p":"/a","ts":now,"n":"outbound","pr":{"href":"x.com"},"vid":"v1"}),
+    ] {
+        app.clone().oneshot(post_collect(ev)).await.unwrap();
+    }
+    wait_for_count(&pool, 4).await;
+
+    let resp = app
+        .oneshot(
+            Request::get("/stats/engagement?site=s&days=365")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    assert_eq!(body["visits"], 1, "got {body}");
+    // Only "signup" counts; scroll_depth + outbound are excluded.
+    assert_eq!(body["avgEventsPerVisit"], 1.0, "got {body}");
+}

@@ -76,6 +76,8 @@ pub fn router(state: AppState) -> Router {
         .route("/stats/vitals", get(stats::vitals))
         .route("/stats/heatmap", get(stats::heatmap))
         .route("/stats/channels", get(stats::channels))
+        .route("/stats/realtime", get(stats::realtime))
+        .route("/stats/engagement", get(stats::engagement))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_admin))
         .layer(cors_stats);
 

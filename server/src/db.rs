@@ -1,6 +1,6 @@
 use crate::types::{
-    HeatmapCell, MetricBucket, RawPayload, Summary, TimeseriesPoint, TopDimension, TopRow, Vitals,
-    VitalsDistribution, VitalsRow,
+    Engagement, EngagementRow, HeatmapCell, MetricBucket, RawPayload, Realtime, ScrollFunnel,
+    Summary, TimeseriesPoint, TopDimension, TopRow, Vitals, VitalsDistribution, VitalsRow,
 };
 
 const PAGELEAVE_DUR_MAX_MS: i32 = 1_800_000;
@@ -604,4 +604,202 @@ pub async fn channels(
         .collect();
     out.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.key.cmp(&b.key)));
     Ok(out)
+}
+
+/// Real-time active page-visits in the trailing `minutes`. Filters on the server
+/// `received_at` (DB clock, so no client skew) — backed by
+/// `analytics_events_site_received_idx`. Distinct `view_id` across all event
+/// types: a visitor reading quietly still counts via their load / leave events.
+pub async fn realtime(pool: &PgPool, site_id: &str, minutes: i32) -> sqlx::Result<Realtime> {
+    let active: i64 = sqlx::query_scalar(
+        "SELECT count(DISTINCT view_id)::bigint
+         FROM analytics_events
+         WHERE site_id = $1
+           AND received_at > now() - make_interval(mins => $2)
+           AND view_id IS NOT NULL",
+    )
+    .bind(site_id)
+    .bind(minutes)
+    .fetch_one(pool)
+    .await?;
+
+    let rows = sqlx::query(
+        "SELECT path AS key, count(DISTINCT view_id)::bigint AS count
+         FROM analytics_events
+         WHERE site_id = $1
+           AND received_at > now() - make_interval(mins => $2)
+           AND view_id IS NOT NULL AND path IS NOT NULL
+         GROUP BY path ORDER BY count DESC, key ASC LIMIT 10",
+    )
+    .bind(site_id)
+    .bind(minutes)
+    .fetch_all(pool)
+    .await?;
+
+    let pages = rows
+        .into_iter()
+        .map(|r| TopRow {
+            key: r
+                .try_get::<Option<String>, _>("key")
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| "(none)".into()),
+            count: r.try_get("count").unwrap_or(0),
+            avg_dur_ms: None,
+            median_dur_ms: None,
+        })
+        .collect();
+
+    Ok(Realtime {
+        active,
+        window_minutes: minutes as i64,
+        pages,
+    })
+}
+
+/// The per-view aggregate that backs both engagement queries. One row per
+/// `view_id`: `is_visit` anchors on a real pageview, `max_scroll` is the deepest
+/// milestone reached (the `~` guard means a hostile non-numeric `pct` is ignored
+/// rather than crashing the `::int` cast), `has_click` covers outbound+download,
+/// `custom_events` excludes the auto-instrumentation names.
+const VIEWS_CTE: &str = "WITH views AS (
+    SELECT
+        view_id,
+        bool_or(type = 'pageview')                            AS is_visit,
+        max(path) FILTER (WHERE type = 'pageview')            AS path,
+        max(dur_ms) FILTER (WHERE type = 'pageleave')         AS dur_ms,
+        max((event_props->>'pct')::int) FILTER (
+            WHERE type = 'event' AND event_name = 'scroll_depth'
+              AND event_props->>'pct' ~ '^[0-9]{1,3}$'
+        )                                                     AS max_scroll,
+        count(*) FILTER (WHERE type = 'event' AND event_name = 'outbound')        AS outbound_n,
+        bool_or(type = 'event' AND event_name IN ('outbound','download'))         AS has_click,
+        count(*) FILTER (
+            WHERE type = 'event' AND event_name NOT IN ('scroll_depth','outbound','download')
+        )                                                     AS custom_events
+    FROM analytics_events
+    WHERE site_id = $1 AND ts BETWEEN $2 AND $3 AND view_id IS NOT NULL
+    GROUP BY view_id
+)";
+
+/// Site-wide per-page-visit engagement. Rates omitted (None) per the opt-in
+/// rules on `Engagement`.
+pub async fn engagement(
+    pool: &PgPool,
+    site_id: &str,
+    from_ts: i64,
+    to_ts: i64,
+) -> sqlx::Result<Engagement> {
+    let sql = format!(
+        "{VIEWS_CTE}
+         SELECT
+            count(*) FILTER (WHERE is_visit)::bigint AS visits,
+            count(*) FILTER (WHERE is_visit AND (
+                coalesce(dur_ms,0) >= 10000 OR coalesce(max_scroll,0) >= 50 OR has_click
+            ))::bigint AS engaged,
+            count(*) FILTER (WHERE is_visit AND max_scroll >= 25)::bigint  AS scrolled_25,
+            count(*) FILTER (WHERE is_visit AND max_scroll >= 50)::bigint  AS scrolled_50,
+            count(*) FILTER (WHERE is_visit AND max_scroll >= 75)::bigint  AS scrolled_75,
+            count(*) FILTER (WHERE is_visit AND max_scroll >= 100)::bigint AS scrolled_100,
+            count(*) FILTER (WHERE is_visit AND max_scroll IS NOT NULL)::bigint AS scroll_visits,
+            count(*) FILTER (WHERE is_visit AND outbound_n > 0)::bigint    AS outbound_visits,
+            (avg(custom_events) FILTER (WHERE is_visit))::float8 AS avg_events
+         FROM views"
+    );
+    let row = sqlx::query(&sql)
+        .bind(site_id)
+        .bind(from_ts)
+        .bind(to_ts)
+        .fetch_one(pool)
+        .await?;
+
+    let g = |k: &str| -> i64 { row.try_get::<i64, _>(k).unwrap_or(0) };
+    let visits = g("visits");
+    let scroll_visits = g("scroll_visits");
+    let outbound_visits = g("outbound_visits");
+    let frac = |n: i64| -> Option<f64> { (visits > 0).then(|| n as f64 / visits as f64) };
+
+    Ok(Engagement {
+        visits,
+        engaged_visit_rate: frac(g("engaged")),
+        avg_events_per_visit: (visits > 0).then(|| {
+            row.try_get::<Option<f64>, _>("avg_events")
+                .ok()
+                .flatten()
+                .unwrap_or(0.0)
+        }),
+        scroll_reach_75: (scroll_visits > 0)
+            .then(|| frac(g("scrolled_75")))
+            .flatten(),
+        outbound_rate: (outbound_visits > 0)
+            .then(|| frac(g("outbound_visits")))
+            .flatten(),
+        scroll_funnel: (scroll_visits > 0).then(|| ScrollFunnel {
+            p25: g("scrolled_25") as f64 / visits as f64,
+            p50: g("scrolled_50") as f64 / visits as f64,
+            p75: g("scrolled_75") as f64 / visits as f64,
+            p100: g("scrolled_100") as f64 / visits as f64,
+        }),
+    })
+}
+
+/// Per-path engagement. `site_scroll_visits` / `site_outbound_visits` are window
+/// totals over every path (computed before LIMIT) so the opt-in omission is
+/// decided site-wide — a tracked path with zero clicks shows `0.0`, not omitted.
+pub async fn engagement_by_path(
+    pool: &PgPool,
+    site_id: &str,
+    from_ts: i64,
+    to_ts: i64,
+    limit: i64,
+) -> sqlx::Result<Vec<EngagementRow>> {
+    let sql = format!(
+        "{VIEWS_CTE}
+         SELECT
+            path AS key,
+            count(*)::bigint AS visits,
+            count(*) FILTER (WHERE
+                coalesce(dur_ms,0) >= 10000 OR coalesce(max_scroll,0) >= 50 OR has_click
+            )::bigint AS engaged,
+            count(*) FILTER (WHERE max_scroll >= 75)::bigint AS scrolled_75,
+            count(*) FILTER (WHERE outbound_n > 0)::bigint AS outbound_visits,
+            (avg(custom_events))::float8 AS avg_events,
+            (sum(count(*) FILTER (WHERE max_scroll IS NOT NULL)) OVER ())::bigint AS site_scroll_visits,
+            (sum(count(*) FILTER (WHERE outbound_n > 0)) OVER ())::bigint AS site_outbound_visits
+         FROM views
+         WHERE is_visit AND path IS NOT NULL
+         GROUP BY path ORDER BY visits DESC, key ASC LIMIT $4"
+    );
+    let rows = sqlx::query(&sql)
+        .bind(site_id)
+        .bind(from_ts)
+        .bind(to_ts)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            let g = |k: &str| -> i64 { r.try_get::<i64, _>(k).unwrap_or(0) };
+            let visits = g("visits");
+            let frac = |n: i64| n as f64 / visits as f64;
+            EngagementRow {
+                key: r
+                    .try_get::<Option<String>, _>("key")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| "(none)".into()),
+                visits,
+                engaged_visit_rate: frac(g("engaged")),
+                avg_events_per_visit: r
+                    .try_get::<Option<f64>, _>("avg_events")
+                    .ok()
+                    .flatten()
+                    .unwrap_or(0.0),
+                scroll_reach_75: (g("site_scroll_visits") > 0).then(|| frac(g("scrolled_75"))),
+                outbound_rate: (g("site_outbound_visits") > 0).then(|| frac(g("outbound_visits"))),
+            }
+        })
+        .collect())
 }

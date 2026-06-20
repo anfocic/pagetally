@@ -78,6 +78,30 @@ pub struct HeatmapQuery {
     pub tz: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct RealtimeQuery {
+    pub site: String,
+    /// Trailing window in minutes (clamped 1–60). Defaults to 5.
+    #[serde(default = "default_realtime_minutes")]
+    pub minutes: u32,
+}
+
+fn default_realtime_minutes() -> u32 {
+    5
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EngagementQuery {
+    pub site: String,
+    #[serde(default = "default_days")]
+    pub days: u32,
+    /// `path` switches the response from the site-wide object to a per-path array.
+    #[serde(default)]
+    pub dim: Option<String>,
+    #[serde(default = "default_limit")]
+    pub limit: u32,
+}
+
 fn range(days: u32) -> (i64, i64) {
     let days = days.clamp(1, 365) as i64;
     let to_ts = chrono::Utc::now().timestamp_millis();
@@ -277,4 +301,49 @@ pub async fn channels(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
     Ok(Json(rows))
+}
+
+pub async fn realtime(
+    State(state): State<AppState>,
+    Query(q): Query<RealtimeQuery>,
+) -> Result<impl IntoResponse, StatusCode> {
+    site_check(&state, &q.site)?;
+    let minutes = q.minutes.clamp(1, 60) as i32;
+    let rt = crate::db::realtime(&state.pool, &q.site, minutes)
+        .await
+        .map_err(|err| {
+            tracing::error!(error = %err, "realtime query failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    Ok(Json(rt))
+}
+
+pub async fn engagement(
+    State(state): State<AppState>,
+    Query(q): Query<EngagementQuery>,
+) -> Result<axum::response::Response, StatusCode> {
+    site_check(&state, &q.site)?;
+    let (from_ts, to_ts) = range(q.days);
+    match q.dim.as_deref() {
+        None => {
+            let e = crate::db::engagement(&state.pool, &q.site, from_ts, to_ts)
+                .await
+                .map_err(|err| {
+                    tracing::error!(error = %err, "engagement query failed");
+                    StatusCode::INTERNAL_SERVER_ERROR
+                })?;
+            Ok(Json(e).into_response())
+        }
+        Some("path") => {
+            let limit = q.limit.clamp(1, 100) as i64;
+            let rows = crate::db::engagement_by_path(&state.pool, &q.site, from_ts, to_ts, limit)
+                .await
+                .map_err(|err| {
+                    tracing::error!(error = %err, "engagement_by_path query failed");
+                    StatusCode::INTERNAL_SERVER_ERROR
+                })?;
+            Ok(Json(rows).into_response())
+        }
+        Some(_) => Err(StatusCode::BAD_REQUEST),
+    }
 }
