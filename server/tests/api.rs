@@ -296,6 +296,115 @@ async fn metrics_endpoint_returns_prometheus_text(pool: PgPool) {
 }
 
 #[sqlx::test]
+async fn collect_stores_utm_and_top_breaks_down(pool: PgPool) {
+    let state = test_state(pool.clone(), None, None);
+    let app = router(state);
+
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    for src in ["newsletter", "newsletter", "twitter"] {
+        let r = app
+            .clone()
+            .oneshot(post_collect(json!({
+                "t": "pageview",
+                "s": "site-1",
+                "p": "/",
+                "ts": now_ms,
+                "u": { "s": src, "m": "email", "c": "spring" }
+            })))
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::ACCEPTED);
+    }
+    wait_for_count(&pool, 3).await;
+
+    let resp = app
+        .oneshot(
+            Request::get("/stats/top?site=site-1&days=365&dim=utm_source")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body[0]["key"], "newsletter");
+    assert_eq!(body[0]["count"], 2);
+    assert_eq!(body[1]["key"], "twitter");
+}
+
+#[sqlx::test]
+async fn stats_events_lists_names_and_breaks_down_by_prop(pool: PgPool) {
+    let app = router(test_state(pool.clone(), None, None));
+
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let events = [
+        json!({"n": "scroll_depth", "pr": {"pct": 50}}),
+        json!({"n": "scroll_depth", "pr": {"pct": 50}}),
+        json!({"n": "scroll_depth", "pr": {"pct": 100}}),
+        json!({"n": "outbound", "pr": {"href": "example.com"}}),
+    ];
+    for e in events {
+        let r = app
+            .clone()
+            .oneshot(post_collect(json!({
+                "t": "event",
+                "s": "site-1",
+                "p": "/",
+                "ts": now_ms,
+                "n": e["n"],
+                "pr": e["pr"],
+            })))
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::ACCEPTED);
+    }
+    wait_for_count(&pool, 4).await;
+
+    // No name → top event names.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::get("/stats/events?site=site-1&days=365")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body[0]["key"], "scroll_depth");
+    assert_eq!(body[0]["count"], 3);
+
+    // name + by → distribution of that event's prop value.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::get("/stats/events?site=site-1&days=365&name=scroll_depth&by=pct")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body[0]["key"], "50");
+    assert_eq!(body[0]["count"], 2);
+    assert_eq!(body[1]["key"], "100");
+    assert_eq!(body[1]["count"], 1);
+
+    // by without name is rejected.
+    let resp = app
+        .oneshot(
+            Request::get("/stats/events?site=site-1&by=pct")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[sqlx::test]
 async fn pageleave_dur_is_clamped(pool: PgPool) {
     let app = router(test_state(pool.clone(), None, None));
     let resp = app

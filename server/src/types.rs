@@ -15,6 +15,8 @@ pub enum RawPayload {
         d: Option<String>,
         #[serde(default)]
         v: Option<i32>,
+        #[serde(default)]
+        u: Option<Utm>,
     },
     #[serde(rename = "event")]
     Event {
@@ -45,6 +47,18 @@ pub const MAX_SITE_ID: usize = 64;
 pub const MAX_PATH: usize = 2048;
 pub const MAX_REFERRER: usize = 253;
 pub const MAX_EVENT_NAME: usize = 64;
+pub const MAX_UTM: usize = 128;
+
+/// UTM campaign tags parsed from the landing URL query string (pageview only).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Utm {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub s: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub m: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub c: Option<String>,
+}
 
 impl RawPayload {
     /// Validate user-supplied lengths and float sanity. Body size is already
@@ -68,6 +82,15 @@ impl RawPayload {
             && r.len() > MAX_REFERRER
         {
             return Err("invalid referrer");
+        }
+        if let RawPayload::Pageview { u: Some(u), .. } = self {
+            for field in [&u.s, &u.m, &u.c] {
+                if let Some(v) = field
+                    && v.len() > MAX_UTM
+                {
+                    return Err("invalid utm");
+                }
+            }
         }
         if let RawPayload::Event { n, .. } = self
             && (n.is_empty() || n.len() > MAX_EVENT_NAME)
@@ -124,6 +147,7 @@ mod tests {
             r: None,
             d: None,
             v: None,
+            u: None,
         }
     }
 
@@ -268,6 +292,9 @@ pub enum TopDimension {
     Referrer,
     Country,
     Device,
+    UtmSource,
+    UtmMedium,
+    UtmCampaign,
 }
 
 impl TopDimension {
@@ -277,6 +304,9 @@ impl TopDimension {
             "referrer" => Some(Self::Referrer),
             "country" => Some(Self::Country),
             "device" => Some(Self::Device),
+            "utm_source" => Some(Self::UtmSource),
+            "utm_medium" => Some(Self::UtmMedium),
+            "utm_campaign" => Some(Self::UtmCampaign),
             _ => None,
         }
     }
@@ -287,6 +317,9 @@ impl TopDimension {
             Self::Referrer => "referrer",
             Self::Country => "country",
             Self::Device => "device",
+            Self::UtmSource => "utm_source",
+            Self::UtmMedium => "utm_medium",
+            Self::UtmCampaign => "utm_campaign",
         }
     }
 }

@@ -32,6 +32,19 @@ describe('buildPageViewPayload', () => {
     const payload = buildPageViewPayload()
     expect(payload.v).toBe(1440)
   })
+
+  it('attaches utm campaign from the landing query string', () => {
+    history.replaceState({}, '', '/landing?utm_source=news&utm_campaign=spring')
+    const payload = buildPageViewPayload()
+    expect(payload.u).toEqual({ s: 'news', c: 'spring' })
+    expect(payload.p).toBe('/landing')
+  })
+
+  it('omits u when no utm params present', () => {
+    history.replaceState({}, '', '/plain')
+    const payload = buildPageViewPayload()
+    expect(payload.u).toBeUndefined()
+  })
 })
 
 describe('buildEventPayload', () => {

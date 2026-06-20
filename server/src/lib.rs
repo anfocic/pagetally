@@ -68,6 +68,7 @@ pub fn router(state: AppState) -> Router {
         .route("/stats/summary", get(stats::summary))
         .route("/stats/timeseries", get(stats::timeseries))
         .route("/stats/top", get(stats::top))
+        .route("/stats/events", get(stats::events))
         .route("/stats/vitals", get(stats::vitals))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_admin))
         .layer(cors_stats);
