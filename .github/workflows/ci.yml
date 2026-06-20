@@ -146,3 +146,37 @@ jobs:
       - name: run e2e
         working-directory: e2e
         run: npx playwright test
+
+  docker:
+    name: docker (build + smoke)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: dullahan
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t dullahan:ci ./server
+      - name: Run + smoke (/health, /pt.js)
+        run: |
+          docker run -d --name dullahan --network host \
+            -e DATABASE_URL=postgres://postgres:postgres@localhost:5432/dullahan \
+            -e ADMIN_TOKEN=ci-token \
+            -e BIND_ADDR=127.0.0.1:3001 \
+            dullahan:ci
+          for i in $(seq 1 30); do sleep 1; curl -fsS http://127.0.0.1:3001/health && break; done
+          curl -fsS http://127.0.0.1:3001/health
+          # /pt.js must serve the real vendored tracker (the global is window.dullahan)
+          curl -fsS http://127.0.0.1:3001/pt.js | grep -q 'dullahan' && echo "pt.js OK"
+          docker logs dullahan
+          docker rm -f dullahan
