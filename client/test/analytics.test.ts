@@ -97,24 +97,24 @@ describe('Analytics', () => {
     })
 
     it('fires page view on pushState', async () => {
-      vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
+      const spy = vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
       const a = new Analytics({ endpoint: ENDPOINT, siteId: SITE_ID, autoTrack: true })
 
-      const before = navigator.sendBeacon.mock.calls.length
+      const before = spy.mock.calls.length
       history.pushState({}, '', '/new-page')
 
-      expect(navigator.sendBeacon).toHaveBeenCalledTimes(before + 1)
+      expect(spy).toHaveBeenCalledTimes(before + 1)
       a.stop()
     })
 
     it('does not fire page view on replaceState', async () => {
-      vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
+      const spy = vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
       const a = new Analytics({ endpoint: ENDPOINT, siteId: SITE_ID, autoTrack: true })
 
-      const before = navigator.sendBeacon.mock.calls.length
+      const before = spy.mock.calls.length
       history.replaceState({}, '', '/replaced')
 
-      expect(navigator.sendBeacon).toHaveBeenCalledTimes(before)
+      expect(spy).toHaveBeenCalledTimes(before)
       a.stop()
     })
 
@@ -128,14 +128,46 @@ describe('Analytics', () => {
     })
 
     it('does not fire pushState after stop', () => {
-      vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
+      const spy = vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
       const a = new Analytics({ endpoint: ENDPOINT, siteId: SITE_ID, autoTrack: true })
       a.stop()
 
-      const before = navigator.sendBeacon.mock.calls.length
+      const before = spy.mock.calls.length
       history.pushState({}, '', '/after-stop')
 
-      expect(navigator.sendBeacon).toHaveBeenCalledTimes(before)
+      expect(spy).toHaveBeenCalledTimes(before)
+    })
+  })
+
+  describe('pageview dedupe', () => {
+    it('does not emit a pageview on hashchange (the hash is stripped from the path)', () => {
+      vi.useFakeTimers()
+      const spy = vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
+      const a = new Analytics({ endpoint: ENDPOINT, siteId: SITE_ID, autoTrack: true })
+      spy.mockClear()
+
+      // Past the 500ms same-path window, so this would re-count without the fix.
+      vi.advanceTimersByTime(600)
+      window.dispatchEvent(new Event('hashchange'))
+
+      expect(spy).not.toHaveBeenCalled()
+      a.stop()
+      vi.useRealTimers()
+    })
+
+    it('page() then a pushState to the same path emits only one pageview', async () => {
+      history.replaceState({}, '', '/start')
+      const spy = vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
+      const a = new Analytics({ endpoint: ENDPOINT, siteId: SITE_ID, autoTrack: true })
+      spy.mockClear()
+
+      a.page('/dash')
+      history.pushState({}, '', '/dash')
+
+      const all = await Promise.all(spy.mock.calls.map((c) => getPayloadFromCall(c)))
+      const dashViews = all.filter((p) => p.t === 'pageview' && p.p === '/dash')
+      expect(dashViews).toHaveLength(1)
+      a.stop()
     })
   })
 
@@ -311,14 +343,14 @@ describe('Analytics', () => {
       const spy = vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
       const a = new Analytics({ endpoint: ENDPOINT, siteId: SITE_ID, autoTrack: true })
 
-      const callsAtInit = navigator.sendBeacon.mock.calls.length
+      const callsAtInit = spy.mock.calls.length
       a.stop()
 
       a.track('event')
       a.page('/page')
       history.pushState({}, '', '/after-stop')
 
-      expect(navigator.sendBeacon).toHaveBeenCalledTimes(callsAtInit)
+      expect(spy).toHaveBeenCalledTimes(callsAtInit)
     })
   })
 })

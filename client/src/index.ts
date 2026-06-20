@@ -1,4 +1,4 @@
-import type { AnalyticsConfig, Payload, PerformanceMetrics } from './types'
+import type { AnalyticsConfig, Payload, PayloadInput, PerformanceMetrics } from './types'
 import { checkDNT } from './privacy'
 import { sendPayload } from './transport'
 import {
@@ -14,7 +14,16 @@ import { startEngagement, type Engagement } from './engagement'
 import { startScrollTracking, type ScrollTracker } from './scroll'
 import { startClickTracking } from './clicks'
 
-export type { AnalyticsConfig, Payload, PerformanceMetrics } from './types'
+export type {
+  AnalyticsConfig,
+  Payload,
+  PayloadInput,
+  PageviewPayload,
+  EventPayload,
+  PerformancePayload,
+  PageleavePayload,
+  PerformanceMetrics,
+} from './types'
 
 const INSTANCE_KEY = '__pagetally_active__'
 
@@ -84,7 +93,7 @@ export class Analytics {
     this._startPerformanceTracking()
   }
 
-  private _send(payload: Omit<Payload, 's'>): void {
+  private _send(payload: PayloadInput): void {
     if (this.stopped) return
     const full = { ...payload, s: this.config.siteId } as Payload
     // A payload may carry an explicit vid (performance metrics pin the view

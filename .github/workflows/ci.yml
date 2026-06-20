@@ -99,6 +99,8 @@ jobs:
       - working-directory: client
         run: npm ci
       - working-directory: client
+        run: npm run typecheck
+      - working-directory: client
         run: npm test
       - working-directory: client
         run: npm run build
