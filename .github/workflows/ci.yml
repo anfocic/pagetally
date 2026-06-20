@@ -104,3 +104,45 @@ jobs:
         run: npm test
       - working-directory: client
         run: npm run build
+
+  e2e:
+    name: e2e (playwright)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: pagetally_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/pagetally_e2e
+      CI: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # run-server.sh builds the client (for /pt.js) then runs the server.
+      - name: install client deps
+        working-directory: client
+        run: npm ci
+      - name: install e2e deps
+        working-directory: e2e
+        run: npm ci
+      - name: install playwright chromium
+        working-directory: e2e
+        run: npx playwright install --with-deps chromium
+      - name: run e2e
+        working-directory: e2e
+        run: npx playwright test
