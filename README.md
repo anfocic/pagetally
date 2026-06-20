@@ -2,6 +2,8 @@
 
 GDPR-compliant, cookie-free web analytics. Browser client + self-hostable Rust server.
 
+New here? [`OVERVIEW.md`](OVERVIEW.md) is a tour of what the app does; [`CLAUDE.md`](CLAUDE.md) is the contributor guide.
+
 ## Two parts
 
 | Path | What | Install |
