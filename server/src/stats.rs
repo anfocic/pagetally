@@ -1,5 +1,5 @@
 use crate::state::AppState;
-use crate::types::TopDimension;
+use crate::types::{SummaryChange, SummaryResponse, TopDimension};
 use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
@@ -11,6 +11,9 @@ pub struct RangeQuery {
     pub site: String,
     #[serde(default = "default_days")]
     pub days: u32,
+    /// `prev` adds a comparison against the immediately preceding equal window.
+    #[serde(default)]
+    pub compare: Option<String>,
 }
 
 fn default_days() -> u32 {
@@ -53,6 +56,28 @@ pub struct EventsQuery {
     pub limit: u32,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct VitalsQuery {
+    pub site: String,
+    #[serde(default = "default_days")]
+    pub days: u32,
+    /// `path` switches the response from the site-wide object to a per-path array.
+    #[serde(default)]
+    pub dim: Option<String>,
+    #[serde(default = "default_limit")]
+    pub limit: u32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HeatmapQuery {
+    pub site: String,
+    #[serde(default = "default_days")]
+    pub days: u32,
+    /// IANA timezone for hour-of-day bucketing. Defaults to UTC.
+    #[serde(default)]
+    pub tz: Option<String>,
+}
+
 fn range(days: u32) -> (i64, i64) {
     let days = days.clamp(1, 365) as i64;
     let to_ts = chrono::Utc::now().timestamp_millis();
@@ -75,13 +100,47 @@ pub async fn summary(
 ) -> Result<impl IntoResponse, StatusCode> {
     site_check(&state, &q.site)?;
     let (from_ts, to_ts) = range(q.days);
-    let s = crate::db::summary(&state.pool, &q.site, from_ts, to_ts)
+    let current = crate::db::summary(&state.pool, &q.site, from_ts, to_ts)
         .await
         .map_err(|err| {
             tracing::error!(error = %err, "summary query failed");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
-    Ok(Json(s))
+
+    let (previous, change) = if q.compare.as_deref() == Some("prev") {
+        let span = to_ts - from_ts;
+        let prev = crate::db::summary(&state.pool, &q.site, from_ts - span, from_ts)
+            .await
+            .map_err(|err| {
+                tracing::error!(error = %err, "summary compare query failed");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+        let change = SummaryChange {
+            pageviews: pct_change(current.pageviews, prev.pageviews),
+            events: pct_change(current.events, prev.events),
+            unique_visitors: match (current.unique_visitors, prev.unique_visitors) {
+                (Some(c), Some(p)) => pct_change(c, p),
+                _ => None,
+            },
+        };
+        (Some(prev), Some(change))
+    } else {
+        (None, None)
+    };
+
+    Ok(Json(SummaryResponse {
+        current,
+        previous,
+        change,
+    }))
+}
+
+/// Percentage change of `current` vs `previous`. `None` when `previous` is 0.
+fn pct_change(current: i64, previous: i64) -> Option<f64> {
+    if previous == 0 {
+        return None;
+    }
+    Some((current - previous) as f64 / previous as f64 * 100.0)
 }
 
 pub async fn timeseries(
@@ -148,15 +207,74 @@ pub async fn events(
 
 pub async fn vitals(
     State(state): State<AppState>,
+    Query(q): Query<VitalsQuery>,
+) -> Result<axum::response::Response, StatusCode> {
+    site_check(&state, &q.site)?;
+    let (from_ts, to_ts) = range(q.days);
+    match q.dim.as_deref() {
+        None => {
+            let v = crate::db::vitals(&state.pool, &q.site, from_ts, to_ts)
+                .await
+                .map_err(|err| {
+                    tracing::error!(error = %err, "vitals query failed");
+                    StatusCode::INTERNAL_SERVER_ERROR
+                })?;
+            Ok(Json(v).into_response())
+        }
+        Some("path") => {
+            let limit = q.limit.clamp(1, 100) as i64;
+            let rows = crate::db::vitals_by_path(&state.pool, &q.site, from_ts, to_ts, limit)
+                .await
+                .map_err(|err| {
+                    tracing::error!(error = %err, "vitals_by_path query failed");
+                    StatusCode::INTERNAL_SERVER_ERROR
+                })?;
+            Ok(Json(rows).into_response())
+        }
+        Some(_) => Err(StatusCode::BAD_REQUEST),
+    }
+}
+
+pub async fn heatmap(
+    State(state): State<AppState>,
+    Query(q): Query<HeatmapQuery>,
+) -> Result<impl IntoResponse, StatusCode> {
+    site_check(&state, &q.site)?;
+    let tz = q.tz.as_deref().unwrap_or("UTC");
+    // Defense in depth (it is a bind param anyway): reject obviously-bad tz.
+    if tz.len() > 64
+        || !tz
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'_' | b'/'))
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let (from_ts, to_ts) = range(q.days);
+    match crate::db::heatmap(&state.pool, &q.site, from_ts, to_ts, tz).await {
+        Ok(rows) => Ok(Json(rows)),
+        Err(err) => {
+            // Unknown timezone -> Postgres invalid_parameter_value (22023) -> 400.
+            if err.as_database_error().and_then(|e| e.code()).as_deref() == Some("22023") {
+                Err(StatusCode::BAD_REQUEST)
+            } else {
+                tracing::error!(error = %err, "heatmap query failed");
+                Err(StatusCode::INTERNAL_SERVER_ERROR)
+            }
+        }
+    }
+}
+
+pub async fn channels(
+    State(state): State<AppState>,
     Query(q): Query<RangeQuery>,
 ) -> Result<impl IntoResponse, StatusCode> {
     site_check(&state, &q.site)?;
     let (from_ts, to_ts) = range(q.days);
-    let v = crate::db::vitals(&state.pool, &q.site, from_ts, to_ts)
+    let rows = crate::db::channels(&state.pool, &q.site, from_ts, to_ts)
         .await
         .map_err(|err| {
-            tracing::error!(error = %err, "vitals query failed");
+            tracing::error!(error = %err, "channels query failed");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
-    Ok(Json(v))
+    Ok(Json(rows))
 }

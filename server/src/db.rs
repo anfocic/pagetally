@@ -1,4 +1,7 @@
-use crate::types::{RawPayload, Summary, TimeseriesPoint, TopDimension, TopRow, Vitals};
+use crate::types::{
+    HeatmapCell, MetricBucket, RawPayload, Summary, TimeseriesPoint, TopDimension, TopRow, Vitals,
+    VitalsDistribution, VitalsRow,
+};
 
 const PAGELEAVE_DUR_MAX_MS: i32 = 1_800_000;
 use sqlx::Row;
@@ -170,6 +173,8 @@ pub async fn summary(
             COUNT(*) FILTER (WHERE type = 'pageview')::bigint AS pageviews,
             COUNT(*) FILTER (WHERE type = 'event')::bigint     AS events,
             (AVG(dur_ms) FILTER (WHERE type = 'pageleave'))::float8 AS avg_time_on_page_ms,
+            (percentile_cont(0.5)  WITHIN GROUP (ORDER BY dur_ms) FILTER (WHERE type = 'pageleave'))::float8 AS median_time_on_page_ms,
+            (percentile_cont(0.75) WITHIN GROUP (ORDER BY dur_ms) FILTER (WHERE type = 'pageleave'))::float8 AS p75_time_on_page_ms,
             NULLIF(
               COUNT(DISTINCT visitor_hash) FILTER (WHERE type = 'pageview' AND visitor_hash IS NOT NULL),
               0
@@ -205,6 +210,14 @@ pub async fn summary(
             .try_get::<Option<f64>, _>("avg_time_on_page_ms")
             .ok()
             .flatten(),
+        median_time_on_page_ms: row
+            .try_get::<Option<f64>, _>("median_time_on_page_ms")
+            .ok()
+            .flatten(),
+        p75_time_on_page_ms: row
+            .try_get::<Option<f64>, _>("p75_time_on_page_ms")
+            .ok()
+            .flatten(),
         unique_visitors: row
             .try_get::<Option<i64>, _>("unique_visitors")
             .ok()
@@ -223,7 +236,8 @@ pub async fn timeseries(
     let trunc = if bucket == "hour" { "hour" } else { "day" };
     let rows = sqlx::query(&format!(
         "SELECT date_trunc('{trunc}', to_timestamp(ts / 1000.0)) AS bucket,
-                COUNT(*)::bigint AS pageviews
+                COUNT(*)::bigint AS pageviews,
+                NULLIF(COUNT(DISTINCT visitor_hash) FILTER (WHERE visitor_hash IS NOT NULL), 0)::bigint AS uniques
          FROM analytics_events
          WHERE site_id = $1 AND ts BETWEEN $2 AND $3 AND type = 'pageview'
          GROUP BY bucket ORDER BY bucket ASC"
@@ -239,6 +253,7 @@ pub async fn timeseries(
         .map(|r| TimeseriesPoint {
             bucket: r.get("bucket"),
             pageviews: r.try_get("pageviews").unwrap_or(0),
+            unique_visitors: r.try_get::<Option<i64>, _>("uniques").ok().flatten(),
         })
         .collect())
 }
@@ -255,7 +270,8 @@ pub async fn top(
         let rows = sqlx::query(
             "SELECT path AS key,
                     COUNT(*) FILTER (WHERE type = 'pageview')::bigint AS count,
-                    (AVG(dur_ms) FILTER (WHERE type = 'pageleave'))::float8 AS avg_dur_ms
+                    (AVG(dur_ms) FILTER (WHERE type = 'pageleave'))::float8 AS avg_dur_ms,
+                    (percentile_cont(0.5) WITHIN GROUP (ORDER BY dur_ms) FILTER (WHERE type = 'pageleave'))::float8 AS median_dur_ms
              FROM analytics_events
              WHERE site_id = $1 AND ts BETWEEN $2 AND $3
                    AND type IN ('pageview', 'pageleave')
@@ -282,6 +298,7 @@ pub async fn top(
                     .unwrap_or_else(|| "(none)".into()),
                 count: r.try_get("count").unwrap_or(0),
                 avg_dur_ms: r.try_get::<Option<f64>, _>("avg_dur_ms").ok().flatten(),
+                median_dur_ms: r.try_get::<Option<f64>, _>("median_dur_ms").ok().flatten(),
             })
             .collect());
     }
@@ -311,6 +328,7 @@ pub async fn top(
                 .unwrap_or_else(|| "(none)".into()),
             count: r.try_get("count").unwrap_or(0),
             avg_dur_ms: None,
+            median_dur_ms: None,
         })
         .collect())
 }
@@ -370,6 +388,7 @@ pub async fn events(
                 .unwrap_or_else(|| "(none)".into()),
             count: r.try_get("count").unwrap_or(0),
             avg_dur_ms: None,
+            median_dur_ms: None,
         })
         .collect())
 }
@@ -386,7 +405,22 @@ pub async fn vitals(
             (percentile_cont(0.75) WITHIN GROUP (ORDER BY (metrics->>'fcp')::numeric))::float8  AS fcp,
             (percentile_cont(0.75) WITHIN GROUP (ORDER BY (metrics->>'cls')::numeric))::float8  AS cls,
             (percentile_cont(0.75) WITHIN GROUP (ORDER BY (metrics->>'inp')::numeric))::float8  AS inp,
-            (percentile_cont(0.75) WITHIN GROUP (ORDER BY (metrics->>'ttfb')::numeric))::float8 AS ttfb
+            (percentile_cont(0.75) WITHIN GROUP (ORDER BY (metrics->>'ttfb')::numeric))::float8 AS ttfb,
+            COUNT(*) FILTER (WHERE (metrics->>'lcp')  IS NOT NULL)::bigint AS lcp_total,
+            COUNT(*) FILTER (WHERE (metrics->>'lcp')::numeric  <= 2500)::bigint AS lcp_good,
+            COUNT(*) FILTER (WHERE (metrics->>'lcp')::numeric  >  4000)::bigint AS lcp_poor,
+            COUNT(*) FILTER (WHERE (metrics->>'fcp')  IS NOT NULL)::bigint AS fcp_total,
+            COUNT(*) FILTER (WHERE (metrics->>'fcp')::numeric  <= 1800)::bigint AS fcp_good,
+            COUNT(*) FILTER (WHERE (metrics->>'fcp')::numeric  >  3000)::bigint AS fcp_poor,
+            COUNT(*) FILTER (WHERE (metrics->>'cls')  IS NOT NULL)::bigint AS cls_total,
+            COUNT(*) FILTER (WHERE (metrics->>'cls')::numeric  <= 0.10)::bigint AS cls_good,
+            COUNT(*) FILTER (WHERE (metrics->>'cls')::numeric  >  0.25)::bigint AS cls_poor,
+            COUNT(*) FILTER (WHERE (metrics->>'inp')  IS NOT NULL)::bigint AS inp_total,
+            COUNT(*) FILTER (WHERE (metrics->>'inp')::numeric  <= 200)::bigint AS inp_good,
+            COUNT(*) FILTER (WHERE (metrics->>'inp')::numeric  >  500)::bigint AS inp_poor,
+            COUNT(*) FILTER (WHERE (metrics->>'ttfb') IS NOT NULL)::bigint AS ttfb_total,
+            COUNT(*) FILTER (WHERE (metrics->>'ttfb')::numeric <= 800)::bigint AS ttfb_good,
+            COUNT(*) FILTER (WHERE (metrics->>'ttfb')::numeric >  1800)::bigint AS ttfb_poor
          FROM analytics_events
          WHERE site_id = $1 AND ts BETWEEN $2 AND $3 AND type = 'performance'",
     )
@@ -397,6 +431,21 @@ pub async fn vitals(
     .await?;
 
     let pick = |k: &str| -> Option<f64> { row.try_get::<Option<f64>, _>(k).ok().flatten() };
+    let count = |k: &str| -> i64 { row.try_get::<i64, _>(k).unwrap_or(0) };
+    let bucket = |m: &str| -> MetricBucket {
+        let total = count(&format!("{m}_total"));
+        let good = count(&format!("{m}_good"));
+        let poor = count(&format!("{m}_poor"));
+        MetricBucket {
+            good,
+            poor,
+            total,
+            needs_improvement: (total - good - poor).max(0),
+        }
+    };
+    let has_data = ["lcp", "fcp", "cls", "inp", "ttfb"]
+        .iter()
+        .any(|m| count(&format!("{m}_total")) > 0);
 
     Ok(Vitals {
         lcp_p75: pick("lcp"),
@@ -404,5 +453,155 @@ pub async fn vitals(
         cls_p75: pick("cls"),
         inp_p75: pick("inp"),
         ttfb_p75: pick("ttfb"),
+        distribution: has_data.then(|| VitalsDistribution {
+            lcp: bucket("lcp"),
+            fcp: bucket("fcp"),
+            cls: bucket("cls"),
+            inp: bucket("inp"),
+            ttfb: bucket("ttfb"),
+        }),
     })
+}
+
+/// Per-path p75 vitals with per-metric sample counts. Ordered by total perf
+/// rows so the busiest pages surface first.
+pub async fn vitals_by_path(
+    pool: &PgPool,
+    site_id: &str,
+    from_ts: i64,
+    to_ts: i64,
+    limit: i64,
+) -> sqlx::Result<Vec<VitalsRow>> {
+    let rows = sqlx::query(
+        "SELECT path AS key,
+                COUNT(*)::bigint AS samples,
+                (percentile_cont(0.75) WITHIN GROUP (ORDER BY (metrics->>'lcp')::numeric))::float8  AS lcp,
+                (percentile_cont(0.75) WITHIN GROUP (ORDER BY (metrics->>'fcp')::numeric))::float8  AS fcp,
+                (percentile_cont(0.75) WITHIN GROUP (ORDER BY (metrics->>'cls')::numeric))::float8  AS cls,
+                (percentile_cont(0.75) WITHIN GROUP (ORDER BY (metrics->>'inp')::numeric))::float8  AS inp,
+                (percentile_cont(0.75) WITHIN GROUP (ORDER BY (metrics->>'ttfb')::numeric))::float8 AS ttfb,
+                COUNT(*) FILTER (WHERE (metrics->>'lcp')  IS NOT NULL)::bigint AS lcp_n,
+                COUNT(*) FILTER (WHERE (metrics->>'fcp')  IS NOT NULL)::bigint AS fcp_n,
+                COUNT(*) FILTER (WHERE (metrics->>'cls')  IS NOT NULL)::bigint AS cls_n,
+                COUNT(*) FILTER (WHERE (metrics->>'inp')  IS NOT NULL)::bigint AS inp_n,
+                COUNT(*) FILTER (WHERE (metrics->>'ttfb') IS NOT NULL)::bigint AS ttfb_n
+         FROM analytics_events
+         WHERE site_id = $1 AND ts BETWEEN $2 AND $3 AND type = 'performance' AND path IS NOT NULL
+         GROUP BY path ORDER BY samples DESC LIMIT $4",
+    )
+    .bind(site_id)
+    .bind(from_ts)
+    .bind(to_ts)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            let p = |k: &str| r.try_get::<Option<f64>, _>(k).ok().flatten();
+            let n = |k: &str| r.try_get::<i64, _>(k).unwrap_or(0);
+            VitalsRow {
+                key: r
+                    .try_get::<Option<String>, _>("key")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| "(none)".into()),
+                samples: r.try_get("samples").unwrap_or(0),
+                lcp_p75: p("lcp"),
+                lcp_n: n("lcp_n"),
+                fcp_p75: p("fcp"),
+                fcp_n: n("fcp_n"),
+                cls_p75: p("cls"),
+                cls_n: n("cls_n"),
+                inp_p75: p("inp"),
+                inp_n: n("inp_n"),
+                ttfb_p75: p("ttfb"),
+                ttfb_n: n("ttfb_n"),
+            }
+        })
+        .collect())
+}
+
+/// Pageviews bucketed by weekday (ISO 1-7) and hour (0-23) in `tz`. An invalid
+/// `tz` surfaces as a Postgres `invalid_parameter_value` error (mapped to 400 by
+/// the handler). `tz` is a bind param — never interpolated.
+pub async fn heatmap(
+    pool: &PgPool,
+    site_id: &str,
+    from_ts: i64,
+    to_ts: i64,
+    tz: &str,
+) -> sqlx::Result<Vec<HeatmapCell>> {
+    let rows = sqlx::query(
+        "SELECT EXTRACT(isodow FROM to_timestamp(ts / 1000.0) AT TIME ZONE $4)::int AS weekday,
+                EXTRACT(hour   FROM to_timestamp(ts / 1000.0) AT TIME ZONE $4)::int AS hour,
+                COUNT(*)::bigint AS pageviews
+         FROM analytics_events
+         WHERE site_id = $1 AND ts BETWEEN $2 AND $3 AND type = 'pageview'
+         GROUP BY weekday, hour ORDER BY weekday, hour",
+    )
+    .bind(site_id)
+    .bind(from_ts)
+    .bind(to_ts)
+    .bind(tz)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| HeatmapCell {
+            weekday: r.try_get("weekday").unwrap_or(0),
+            hour: r.try_get("hour").unwrap_or(0),
+            pageviews: r.try_get("pageviews").unwrap_or(0),
+        })
+        .collect())
+}
+
+/// Pageviews grouped into marketing channels (see `crate::channels`).
+pub async fn channels(
+    pool: &PgPool,
+    site_id: &str,
+    from_ts: i64,
+    to_ts: i64,
+) -> sqlx::Result<Vec<TopRow>> {
+    let rows = sqlx::query(
+        "SELECT referrer, utm_source, utm_medium, utm_campaign, COUNT(*)::bigint AS count
+         FROM analytics_events
+         WHERE site_id = $1 AND ts BETWEEN $2 AND $3 AND type = 'pageview'
+         GROUP BY referrer, utm_source, utm_medium, utm_campaign",
+    )
+    .bind(site_id)
+    .bind(from_ts)
+    .bind(to_ts)
+    .fetch_all(pool)
+    .await?;
+
+    let mut totals: std::collections::HashMap<&'static str, i64> = std::collections::HashMap::new();
+    for r in &rows {
+        let referrer: Option<String> = r.try_get("referrer").ok().flatten();
+        let utm_source: Option<String> = r.try_get("utm_source").ok().flatten();
+        let utm_medium: Option<String> = r.try_get("utm_medium").ok().flatten();
+        let utm_campaign: Option<String> = r.try_get("utm_campaign").ok().flatten();
+        let count: i64 = r.try_get("count").unwrap_or(0);
+        let channel = crate::channels::classify(
+            referrer.as_deref(),
+            utm_source.as_deref(),
+            utm_medium.as_deref(),
+            utm_campaign.as_deref(),
+        );
+        *totals.entry(channel).or_insert(0) += count;
+    }
+
+    let mut out: Vec<TopRow> = totals
+        .into_iter()
+        .map(|(channel, count)| TopRow {
+            key: channel.to_string(),
+            count,
+            avg_dur_ms: None,
+            median_dur_ms: None,
+        })
+        .collect();
+    out.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.key.cmp(&b.key)));
+    Ok(out)
 }

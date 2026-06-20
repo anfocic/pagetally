@@ -291,6 +291,10 @@ pub struct Summary {
     pub top_path: Option<String>,
     #[serde(rename = "avgTimeOnPageMs", skip_serializing_if = "Option::is_none")]
     pub avg_time_on_page_ms: Option<f64>,
+    #[serde(rename = "medianTimeOnPageMs", skip_serializing_if = "Option::is_none")]
+    pub median_time_on_page_ms: Option<f64>,
+    #[serde(rename = "p75TimeOnPageMs", skip_serializing_if = "Option::is_none")]
+    pub p75_time_on_page_ms: Option<f64>,
     /// Distinct visitor hashes (rung 2). `None` when sessions are disabled or
     /// there is no session data in range.
     #[serde(rename = "uniqueVisitors", skip_serializing_if = "Option::is_none")]
@@ -305,6 +309,11 @@ pub struct Summary {
 pub struct TimeseriesPoint {
     pub bucket: chrono::DateTime<chrono::Utc>,
     pub pageviews: i64,
+    /// Distinct visitor hashes in this bucket. `None` when sessions are disabled.
+    /// Reported per-bucket so a multi-day range shows per-day uniques rather than
+    /// the daily-salt-inflated total.
+    #[serde(rename = "uniqueVisitors", skip_serializing_if = "Option::is_none")]
+    pub unique_visitors: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -313,6 +322,8 @@ pub struct TopRow {
     pub count: i64,
     #[serde(rename = "avgDurMs", skip_serializing_if = "Option::is_none")]
     pub avg_dur_ms: Option<f64>,
+    #[serde(rename = "medianDurMs", skip_serializing_if = "Option::is_none")]
+    pub median_dur_ms: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -327,6 +338,91 @@ pub struct Vitals {
     pub inp_p75: Option<f64>,
     #[serde(rename = "ttfbP75", skip_serializing_if = "Option::is_none")]
     pub ttfb_p75: Option<f64>,
+    /// Core-Web-Vitals pass-rate buckets (good / needs-improvement / poor) per
+    /// metric, against Google's thresholds. `None` when there is no perf data.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub distribution: Option<VitalsDistribution>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct VitalsDistribution {
+    pub lcp: MetricBucket,
+    pub fcp: MetricBucket,
+    pub cls: MetricBucket,
+    pub inp: MetricBucket,
+    pub ttfb: MetricBucket,
+}
+
+/// Sample counts for one metric. `needsImprovement = total - good - poor`.
+#[derive(Debug, Clone, Serialize)]
+pub struct MetricBucket {
+    pub good: i64,
+    #[serde(rename = "needsImprovement")]
+    pub needs_improvement: i64,
+    pub poor: i64,
+    pub total: i64,
+}
+
+/// Per-path vitals breakdown (`/stats/vitals?dim=path`). Each metric carries its
+/// own sample count because coverage varies — INP only exists on rows with an
+/// interaction, so its `n` is typically far below `samples`.
+#[derive(Debug, Clone, Serialize)]
+pub struct VitalsRow {
+    pub key: String,
+    pub samples: i64,
+    #[serde(rename = "lcpP75", skip_serializing_if = "Option::is_none")]
+    pub lcp_p75: Option<f64>,
+    #[serde(rename = "lcpN")]
+    pub lcp_n: i64,
+    #[serde(rename = "fcpP75", skip_serializing_if = "Option::is_none")]
+    pub fcp_p75: Option<f64>,
+    #[serde(rename = "fcpN")]
+    pub fcp_n: i64,
+    #[serde(rename = "clsP75", skip_serializing_if = "Option::is_none")]
+    pub cls_p75: Option<f64>,
+    #[serde(rename = "clsN")]
+    pub cls_n: i64,
+    #[serde(rename = "inpP75", skip_serializing_if = "Option::is_none")]
+    pub inp_p75: Option<f64>,
+    #[serde(rename = "inpN")]
+    pub inp_n: i64,
+    #[serde(rename = "ttfbP75", skip_serializing_if = "Option::is_none")]
+    pub ttfb_p75: Option<f64>,
+    #[serde(rename = "ttfbN")]
+    pub ttfb_n: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct HeatmapCell {
+    /// ISO weekday: 1 = Monday … 7 = Sunday.
+    pub weekday: i32,
+    /// Hour of day 0–23, in the requested timezone.
+    pub hour: i32,
+    pub pageviews: i64,
+}
+
+/// `summary` wrapper for `compare=prev`. Flattens the current-window summary so
+/// the default (no `compare`) response shape is unchanged.
+#[derive(Debug, Clone, Serialize)]
+pub struct SummaryResponse {
+    #[serde(flatten)]
+    pub current: Summary,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous: Option<Summary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub change: Option<SummaryChange>,
+}
+
+/// Percentage change vs the preceding equal-length window. `None` when the
+/// previous value is 0 (undefined) or unavailable.
+#[derive(Debug, Clone, Serialize)]
+pub struct SummaryChange {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pageviews: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub events: Option<f64>,
+    #[serde(rename = "uniqueVisitors", skip_serializing_if = "Option::is_none")]
+    pub unique_visitors: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -340,6 +436,7 @@ pub enum TopDimension {
     UtmCampaign,
     Browser,
     Os,
+    Viewport,
 }
 
 impl TopDimension {
@@ -354,6 +451,7 @@ impl TopDimension {
             "utm_campaign" => Some(Self::UtmCampaign),
             "browser" => Some(Self::Browser),
             "os" => Some(Self::Os),
+            "viewport" => Some(Self::Viewport),
             _ => None,
         }
     }
@@ -369,6 +467,9 @@ impl TopDimension {
             Self::UtmCampaign => "utm_campaign",
             Self::Browser => "browser",
             Self::Os => "os",
+            // viewport is an int column; the generic `top` query reads `key` as
+            // text, so cast here (fixed allowlisted string — never user input).
+            Self::Viewport => "viewport::text",
         }
     }
 }
