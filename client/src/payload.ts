@@ -1,4 +1,10 @@
-import type { Payload, PerformanceMetrics } from './types'
+import type {
+  PageviewPayload,
+  EventPayload,
+  PerformancePayload,
+  PageleavePayload,
+  PerformanceMetrics,
+} from './types'
 import {
   stripQueryParams,
   getReferrerDomain,
@@ -11,7 +17,7 @@ export function getPath(): string {
   return stripQueryParams(location.pathname + location.search)
 }
 
-export function buildPageViewPayload(path?: string): Omit<Payload, 's'> {
+export function buildPageViewPayload(path?: string): Omit<PageviewPayload, 's'> {
   const w = roundViewportWidth(window.innerWidth)
   const u = extractCampaign(location.search)
 
@@ -29,7 +35,7 @@ export function buildPageViewPayload(path?: string): Omit<Payload, 's'> {
 export function buildEventPayload(
   name: string,
   props?: Record<string, unknown>,
-): Omit<Payload, 's'> {
+): Omit<EventPayload, 's'> {
   return {
     t: 'event',
     p: getPath(),
@@ -39,7 +45,7 @@ export function buildEventPayload(
   }
 }
 
-export function buildPerformancePayload(metrics: PerformanceMetrics): Omit<Payload, 's'> {
+export function buildPerformancePayload(metrics: PerformanceMetrics): Omit<PerformancePayload, 's'> {
   return {
     t: 'performance',
     p: getPath(),
@@ -48,7 +54,7 @@ export function buildPerformancePayload(metrics: PerformanceMetrics): Omit<Paylo
   }
 }
 
-export function buildPageLeavePayload(path: string, dur: number): Omit<Payload, 's'> {
+export function buildPageLeavePayload(path: string, dur: number): Omit<PageleavePayload, 's'> {
   return {
     t: 'pageleave',
     p: stripQueryParams(path),

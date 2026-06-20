@@ -30,6 +30,7 @@
     "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json",
     "prepack": "cp ../README.md ./README.md && cp ../LICENSE ./LICENSE && npm run build"
   },
   "keywords": [
