@@ -1,5 +1,5 @@
 use crate::state::AppState;
-use crate::types::{SummaryChange, SummaryResponse, TopDimension};
+use crate::types::{Funnel, FunnelStep, MAX_PATH, SummaryChange, SummaryResponse, TopDimension};
 use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
@@ -119,6 +119,18 @@ pub struct SessionsQuery {
 
 fn default_gap_minutes() -> u32 {
     30
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FunnelQuery {
+    pub site: String,
+    #[serde(default = "default_days")]
+    pub days: u32,
+    /// Session inactivity gap in minutes (clamped 1–240). Default 30.
+    #[serde(default = "default_gap_minutes")]
+    pub gap: u32,
+    /// Comma-separated ordered pageview paths (2–10 steps).
+    pub steps: String,
 }
 
 fn range(days: u32) -> (i64, i64) {
@@ -402,4 +414,52 @@ pub async fn sessions(
         }
         Some(_) => Err(StatusCode::BAD_REQUEST),
     }
+}
+
+pub async fn funnel(
+    State(state): State<AppState>,
+    Query(q): Query<FunnelQuery>,
+) -> Result<impl IntoResponse, StatusCode> {
+    site_check(&state, &q.site)?;
+    let steps: Vec<String> = q
+        .steps
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if !(2..=10).contains(&steps.len()) || steps.iter().any(|s| s.len() > MAX_PATH) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let gap_ms = (q.gap.clamp(1, 240) as i64) * 60_000;
+    let (from_ts, to_ts) = range(q.days);
+    let counts = crate::db::funnel(&state.pool, &q.site, from_ts, to_ts, gap_ms, &steps)
+        .await
+        .map_err(|err| {
+            tracing::error!(error = %err, "funnel query failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    // step 1 is the funnel base (100%); later steps convert relative to it.
+    let base = counts.first().copied().unwrap_or(0);
+    let steps_out = steps
+        .into_iter()
+        .enumerate()
+        .map(|(i, key)| {
+            let sessions = counts[i];
+            let conversion_from_prev = if i == 0 {
+                Some(1.0)
+            } else {
+                let prev = counts[i - 1];
+                (prev > 0).then(|| sessions as f64 / prev as f64)
+            };
+            FunnelStep {
+                step: (i + 1) as i32,
+                key,
+                sessions,
+                conversion_from_prev,
+                conversion_from_start: (base > 0).then(|| sessions as f64 / base as f64),
+            }
+        })
+        .collect();
+    Ok(Json(Funnel { steps: steps_out }))
 }

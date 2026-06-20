@@ -909,3 +909,71 @@ pub async fn session_pages(
         })
         .collect())
 }
+
+/// Path funnel (rung 3b): how far each session gets down an ordered list of
+/// pageview paths, in time order. Returns the number of sessions reaching each
+/// step (length == `steps.len()`). Reuses 3a sessionization; `steps` is bound as
+/// a `text[]` param, never interpolated. The greedy longest in-order prefix is
+/// computed in Rust from the per-session step-index arrays.
+pub async fn funnel(
+    pool: &PgPool,
+    site_id: &str,
+    from_ts: i64,
+    to_ts: i64,
+    gap_ms: i64,
+    steps: &[String],
+) -> sqlx::Result<Vec<i64>> {
+    let rows = sqlx::query(
+        "WITH pv AS (
+            SELECT visitor_hash, ts, path,
+                   ts - lag(ts) OVER (PARTITION BY visitor_hash ORDER BY ts) AS gap
+            FROM analytics_events
+            WHERE site_id = $1 AND ts BETWEEN $2 AND $3
+              AND type = 'pageview' AND visitor_hash IS NOT NULL
+        ),
+        marked AS (
+            SELECT visitor_hash, ts, path,
+                   sum(CASE WHEN gap IS NULL OR gap > $4 THEN 1 ELSE 0 END)
+                       OVER (PARTITION BY visitor_hash ORDER BY ts) AS session_seq
+            FROM pv
+        ),
+        matched AS (
+            SELECT visitor_hash, session_seq, ts,
+                   array_position($5::text[], path) AS step_idx
+            FROM marked WHERE path = ANY($5::text[])
+        ),
+        seqs AS (
+            SELECT array_agg(step_idx ORDER BY ts) AS steps
+            FROM matched GROUP BY visitor_hash, session_seq
+        )
+        SELECT steps FROM seqs",
+    )
+    .bind(site_id)
+    .bind(from_ts)
+    .bind(to_ts)
+    .bind(gap_ms)
+    .bind(steps)
+    .fetch_all(pool)
+    .await?;
+
+    let k = steps.len();
+    let mut counts = vec![0i64; k];
+    for r in &rows {
+        let arr: Vec<i32> = r.try_get("steps").unwrap_or_default();
+        // Greedy: advance the expected step each time we see it in time order.
+        let mut expected = 1i32;
+        for s in arr {
+            if s == expected {
+                expected += 1;
+                if expected as usize > k {
+                    break;
+                }
+            }
+        }
+        let depth = (expected - 1) as usize;
+        for c in counts.iter_mut().take(depth) {
+            *c += 1;
+        }
+    }
+    Ok(counts)
+}
