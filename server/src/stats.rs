@@ -102,6 +102,25 @@ pub struct EngagementQuery {
     pub limit: u32,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct SessionsQuery {
+    pub site: String,
+    #[serde(default = "default_days")]
+    pub days: u32,
+    /// Inactivity gap in minutes that splits sessions (clamped 1–240). Default 30.
+    #[serde(default = "default_gap_minutes")]
+    pub gap: u32,
+    /// `entry` / `exit` switch the response from the summary object to a per-page array.
+    #[serde(default)]
+    pub dim: Option<String>,
+    #[serde(default = "default_limit")]
+    pub limit: u32,
+}
+
+fn default_gap_minutes() -> u32 {
+    30
+}
+
 fn range(days: u32) -> (i64, i64) {
     let days = days.clamp(1, 365) as i64;
     let to_ts = chrono::Utc::now().timestamp_millis();
@@ -342,6 +361,43 @@ pub async fn engagement(
                     tracing::error!(error = %err, "engagement_by_path query failed");
                     StatusCode::INTERNAL_SERVER_ERROR
                 })?;
+            Ok(Json(rows).into_response())
+        }
+        Some(_) => Err(StatusCode::BAD_REQUEST),
+    }
+}
+
+pub async fn sessions(
+    State(state): State<AppState>,
+    Query(q): Query<SessionsQuery>,
+) -> Result<axum::response::Response, StatusCode> {
+    site_check(&state, &q.site)?;
+    let (from_ts, to_ts) = range(q.days);
+    let gap_ms = (q.gap.clamp(1, 240) as i64) * 60_000;
+    match q.dim.as_deref() {
+        None => {
+            let s = crate::db::sessions(&state.pool, &q.site, from_ts, to_ts, gap_ms)
+                .await
+                .map_err(|err| {
+                    tracing::error!(error = %err, "sessions query failed");
+                    StatusCode::INTERNAL_SERVER_ERROR
+                })?;
+            Ok(Json(s).into_response())
+        }
+        Some(dim @ ("entry" | "exit")) => {
+            let col = if dim == "entry" {
+                "entry_path"
+            } else {
+                "exit_path"
+            };
+            let limit = q.limit.clamp(1, 100) as i64;
+            let rows =
+                crate::db::session_pages(&state.pool, &q.site, from_ts, to_ts, gap_ms, col, limit)
+                    .await
+                    .map_err(|err| {
+                        tracing::error!(error = %err, "session_pages query failed");
+                        StatusCode::INTERNAL_SERVER_ERROR
+                    })?;
             Ok(Json(rows).into_response())
         }
         Some(_) => Err(StatusCode::BAD_REQUEST),

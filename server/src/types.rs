@@ -472,6 +472,30 @@ pub struct EngagementRow {
     pub outbound_rate: Option<f64>,
 }
 
+/// Session-grain aggregates (`/stats/sessions`). A session is a run of one
+/// `visitor_hash`'s pageviews with no gap longer than the requested window;
+/// sessions exist only within a UTC day (the salt rotates daily). All rates are
+/// `None` when there are no sessions in range (sessions disabled or no data).
+#[derive(Debug, Clone, Serialize)]
+pub struct Sessions {
+    pub sessions: i64,
+    #[serde(rename = "avgPagesPerSession", skip_serializing_if = "Option::is_none")]
+    pub avg_pages_per_session: Option<f64>,
+    #[serde(
+        rename = "medianPagesPerSession",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub median_pages_per_session: Option<f64>,
+    #[serde(rename = "avgDurationMs", skip_serializing_if = "Option::is_none")]
+    pub avg_duration_ms: Option<f64>,
+    #[serde(rename = "medianDurationMs", skip_serializing_if = "Option::is_none")]
+    pub median_duration_ms: Option<f64>,
+    /// Share of sessions with a single pageview. Distinct from
+    /// `summary.bounceRate`, which is single-pageview visitor-*days*.
+    #[serde(rename = "bounceRate", skip_serializing_if = "Option::is_none")]
+    pub bounce_rate: Option<f64>,
+}
+
 /// `summary` wrapper for `compare=prev`. Flattens the current-window summary so
 /// the default (no `compare`) response shape is unchanged.
 #[derive(Debug, Clone, Serialize)]
