@@ -608,10 +608,12 @@ async fn update_validates_only_present_fields(pool: PgPool) {
 }
 
 #[sqlx::test]
-async fn open_mode_treats_caller_as_admin_when_token_unset(pool: PgPool) {
-    // ADMIN_TOKEN unset -> is_admin() is always true: writes open, drafts visible.
-    let app = router(state(pool, None));
+async fn open_mode_keeps_reads_open_but_refuses_writes(pool: PgPool) {
+    // ADMIN_TOKEN unset: reads (including drafts) stay open, but writes are
+    // refused — an unconfigured deploy can't be mutated by anonymous callers.
+    let app = router(state(pool.clone(), None));
 
+    // Writes are refused when no token is configured.
     let resp = app
         .clone()
         .oneshot(request(
@@ -624,9 +626,17 @@ async fn open_mode_treats_caller_as_admin_when_token_unset(pool: PgPool) {
         .unwrap();
     assert_eq!(
         resp.status(),
-        StatusCode::CREATED,
-        "create open without a token"
+        StatusCode::UNAUTHORIZED,
+        "writes refused without a configured ADMIN_TOKEN"
     );
+
+    // Seed a draft directly (writes are gated) to confirm reads stay open.
+    sqlx::query(
+        "INSERT INTO blog_posts (slug, title, body_markdown, draft) VALUES ('d', 'D', 'x', true)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
 
     let body = body_json(
         app.clone()
@@ -635,13 +645,13 @@ async fn open_mode_treats_caller_as_admin_when_token_unset(pool: PgPool) {
             .unwrap(),
     )
     .await;
-    assert_eq!(body["total"], 1, "open mode includes drafts; got {body}");
+    assert_eq!(body["total"], 1, "open reads include drafts; got {body}");
 
     let resp = app
         .oneshot(request("GET", "/posts/d", None, None))
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK, "draft visible in open mode");
+    assert_eq!(resp.status(), StatusCode::OK, "draft readable in open mode");
 }
 
 #[sqlx::test]
