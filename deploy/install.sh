@@ -80,7 +80,26 @@ echo "==> building release binary (this takes a few minutes)"
 install -d -o pagetally -g pagetally /opt/pagetally/build-src
 cp -r "$SERVER_DIR/Cargo.toml" "$SERVER_DIR/src" "$SERVER_DIR/migrations" /opt/pagetally/build-src/
 chown -R pagetally:pagetally /opt/pagetally/build-src
-sudo -u pagetally bash -c 'cd /opt/pagetally/build-src && /opt/pagetally/.cargo/bin/cargo build --release --bin pagetally-server'
+
+# Build the browser tracking script and hand its path to the server build, which
+# embeds it (include_str!) so /pt.js serves the real bundle. Best-effort: if Node
+# is unavailable the server still builds and /pt.js serves a placeholder.
+echo "==> building tracking script (client)"
+PT_SCRIPT_ENV=""
+if ! command -v node >/dev/null 2>&1; then
+    echo "    installing Node.js"
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null 2>&1 || true
+    apt-get install -y nodejs >/dev/null 2>&1 || true
+fi
+if command -v npm >/dev/null 2>&1 && (cd "$REPO_DIR/client" && npm ci --no-audit --no-fund && npm run build); then
+    install -o pagetally -g pagetally -m 644 "$REPO_DIR/client/dist/pt.js" /opt/pagetally/build-src/pt.js
+    PT_SCRIPT_ENV="PAGETALLY_SCRIPT=/opt/pagetally/build-src/pt.js"
+else
+    echo "    WARNING: client build unavailable; /pt.js will serve a placeholder."
+    echo "    Install Node 18+ and re-run to embed the real tracking script."
+fi
+
+sudo -u pagetally bash -c "cd /opt/pagetally/build-src && $PT_SCRIPT_ENV /opt/pagetally/.cargo/bin/cargo build --release --bin pagetally-server"
 install -o pagetally -g pagetally -m 755 /opt/pagetally/build-src/target/release/pagetally-server /opt/pagetally/pagetally-server
 rm -rf /opt/pagetally/build-src/target
 

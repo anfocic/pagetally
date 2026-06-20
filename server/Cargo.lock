@@ -1290,6 +1290,7 @@ dependencies = [
  "base64",
  "chrono",
  "http-body-util",
+ "metrics",
  "rand 0.8.6",
  "reqwest",
  "serde",

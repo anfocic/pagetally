@@ -79,6 +79,38 @@ describe('startScrollTracking', () => {
     expect(fired).toEqual([25])
   })
 
+  it('reset() cancels a pending rAF measure so it cannot fire on the new view', () => {
+    // Async rAF queue (overrides the synchronous beforeEach stub) so a measure
+    // can be left pending across a reset.
+    const queue = new Map<number, FrameRequestCallback>()
+    let nextId = 1
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      const id = nextId++
+      queue.set(id, cb)
+      return id
+    })
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => {
+      queue.delete(id)
+    })
+    const runFrames = () => {
+      const cbs = [...queue.values()]
+      queue.clear()
+      cbs.forEach((cb) => cb(0))
+    }
+
+    setDims(5000, 1000, 0)
+    const fired: number[] = []
+    tracker = startScrollTracking((pct) => fired.push(pct))
+
+    scrollTo(4000) // queues a measure; rAF has not run yet
+    expect(fired).toEqual([])
+
+    tracker.reset() // SPA navigation resets before the frame runs
+    runFrames()
+
+    expect(fired).toEqual([])
+  })
+
   it('emits nothing after stop()', () => {
     setDims(5000, 1000, 0)
     const fired: number[] = []

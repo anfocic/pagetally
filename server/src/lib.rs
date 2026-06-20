@@ -15,6 +15,7 @@ use axum::Router;
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
+use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum_prometheus::PrometheusMetricLayer;
 use sha2::{Digest, Sha256};
@@ -53,7 +54,10 @@ pub fn router(state: AppState) -> Router {
         .allow_headers(Any);
 
     let cors_stats = match state.config.stats_origins.as_ref() {
-        Some(origins) if !origins.is_empty() => {
+        // A literal "*" means "any origin" and must use `Any` — tower-http panics
+        // if a wildcard is passed inside `allow_origin(<list>)`. Mixed lists
+        // containing "*" also collapse to "any".
+        Some(origins) if !origins.is_empty() && !origins.iter().any(|o| o == "*") => {
             let parsed: Vec<HeaderValue> = origins
                 .iter()
                 .filter_map(|o| HeaderValue::from_str(o).ok())
@@ -168,6 +172,7 @@ pub fn router(state: AppState) -> Router {
     let mut app = Router::new()
         .merge(public_routes)
         .route("/health", get(health))
+        .route("/pt.js", get(serve_script))
         .merge(stats_routes)
         .merge(blog_routes)
         .with_state(state.clone());
@@ -264,4 +269,22 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 
 async fn health() -> &'static str {
     "ok"
+}
+
+/// The browser tracking client, embedded at build time (see build.rs). Served so
+/// adopters can drop in a single `<script src="…/pt.js" data-site="…">` tag with
+/// no npm install or build step.
+const SCRIPT_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/pt.js"));
+
+async fn serve_script() -> impl IntoResponse {
+    (
+        [
+            (
+                header::CONTENT_TYPE,
+                "application/javascript; charset=utf-8",
+            ),
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        SCRIPT_JS,
+    )
 }

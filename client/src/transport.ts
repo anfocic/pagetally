@@ -5,7 +5,14 @@ export function sendPayload(payload: Payload, endpoint: string): void {
   const blob = new Blob([body], { type: 'application/json' })
 
   try {
-    if (navigator.sendBeacon && navigator.sendBeacon(endpoint, blob)) return
+    if (navigator.sendBeacon) {
+      try {
+        if (navigator.sendBeacon(endpoint, blob)) return
+      } catch {
+        // sendBeacon can throw (not only return false) when the body exceeds the
+        // per-origin queue limit; fall through to fetch rather than dropping it.
+      }
+    }
 
     fetch(endpoint, {
       method: 'POST',

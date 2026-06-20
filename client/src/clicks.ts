@@ -44,11 +44,15 @@ export function startClickTracking(
     const target = e.target
     if (!(target instanceof Element)) return
     const anchor = target.closest('a')
-    if (!anchor || !anchor.getAttribute('href')) return
+    const href = anchor?.getAttribute('href')
+    if (!anchor || !href) return
 
+    // Resolve from the raw attribute, not `anchor.href`: on an SVG <a> the latter
+    // is an SVGAnimatedString that stringifies to garbage ("[object …]"), which
+    // would misclassify or drop SVG (icon/logo) link clicks.
     let url: URL
     try {
-      url = new URL(anchor.href, location.href)
+      url = new URL(href, location.href)
     } catch {
       return
     }

@@ -191,7 +191,11 @@ pub async fn summary(
                   FROM analytics_events
                  WHERE site_id = $1 AND ts BETWEEN $2 AND $3
                        AND type = 'pageview' AND visitor_hash IS NOT NULL
-                 GROUP BY visitor_hash, date_trunc('day', to_timestamp(ts / 1000.0))
+                 -- visitor_hash already encodes the UTC day (daily salt), so it
+                 -- alone is the visitor-day grain. A date_trunc here would be
+                 -- evaluated in the DB session timezone and could split a
+                 -- cross-midnight visit on a non-UTC server.
+                 GROUP BY visitor_hash
               ) sessions
             ) AS bounce_rate
          FROM analytics_events
@@ -925,25 +929,27 @@ pub async fn funnel(
 ) -> sqlx::Result<Vec<i64>> {
     let rows = sqlx::query(
         "WITH pv AS (
-            SELECT visitor_hash, ts, path,
-                   ts - lag(ts) OVER (PARTITION BY visitor_hash ORDER BY ts) AS gap
+            SELECT visitor_hash, ts, received_at, path,
+                   ts - lag(ts) OVER (PARTITION BY visitor_hash ORDER BY ts, received_at) AS gap
             FROM analytics_events
             WHERE site_id = $1 AND ts BETWEEN $2 AND $3
               AND type = 'pageview' AND visitor_hash IS NOT NULL
         ),
         marked AS (
-            SELECT visitor_hash, ts, path,
+            SELECT visitor_hash, ts, received_at, path,
                    sum(CASE WHEN gap IS NULL OR gap > $4 THEN 1 ELSE 0 END)
-                       OVER (PARTITION BY visitor_hash ORDER BY ts) AS session_seq
+                       OVER (PARTITION BY visitor_hash ORDER BY ts, received_at) AS session_seq
             FROM pv
         ),
         matched AS (
-            SELECT visitor_hash, session_seq, ts,
+            SELECT visitor_hash, session_seq, ts, received_at,
                    array_position($5::text[], path) AS step_idx
             FROM marked WHERE path = ANY($5::text[])
         ),
         seqs AS (
-            SELECT array_agg(step_idx ORDER BY ts) AS steps
+            -- received_at breaks ties so the step order (and the funnel result)
+            -- is deterministic when two pageviews share a millisecond ts.
+            SELECT array_agg(step_idx ORDER BY ts, received_at) AS steps
             FROM matched GROUP BY visitor_hash, session_seq
         )
         SELECT steps FROM seqs",

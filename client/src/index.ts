@@ -1,4 +1,4 @@
-import type { AnalyticsConfig, Payload, PerformanceMetrics } from './types'
+import type { AnalyticsConfig, Payload, PayloadInput, PerformanceMetrics } from './types'
 import { checkDNT } from './privacy'
 import { sendPayload } from './transport'
 import {
@@ -14,7 +14,16 @@ import { startEngagement, type Engagement } from './engagement'
 import { startScrollTracking, type ScrollTracker } from './scroll'
 import { startClickTracking } from './clicks'
 
-export type { AnalyticsConfig, Payload, PerformanceMetrics } from './types'
+export type {
+  AnalyticsConfig,
+  Payload,
+  PayloadInput,
+  PageviewPayload,
+  EventPayload,
+  PerformancePayload,
+  PageleavePayload,
+  PerformanceMetrics,
+} from './types'
 
 const INSTANCE_KEY = '__pagetally_active__'
 
@@ -84,10 +93,12 @@ export class Analytics {
     this._startPerformanceTracking()
   }
 
-  private _send(payload: Omit<Payload, 's'>): void {
+  private _send(payload: PayloadInput): void {
     if (this.stopped) return
     const full = { ...payload, s: this.config.siteId } as Payload
-    if (this.currentViewId) full.vid = this.currentViewId
+    // A payload may carry an explicit vid (performance metrics pin the view
+    // they measured); only fall back to the live view id when it doesn't.
+    if (full.vid === undefined && this.currentViewId) full.vid = this.currentViewId
     sendPayload(full, this.config.endpoint)
   }
 
@@ -153,8 +164,19 @@ export class Analytics {
   }
 
   private _startPerformanceTracking(): void {
+    // Web-vitals flush asynchronously (a 15s timeout or the first tab-hide),
+    // potentially long after an SPA navigation has regenerated currentViewId.
+    // Pin the view id and path of the pageload being measured now so the
+    // metrics aren't misattributed to a later page-visit.
+    const viewId = this.currentViewId
+    const path = getPath()
     const send = (metrics: PerformanceMetrics) => {
-      this._send(buildPerformancePayload(metrics))
+      const payload = buildPerformancePayload(metrics)
+      if (viewId) {
+        payload.vid = viewId
+        payload.p = path
+      }
+      this._send(payload)
     }
     this.cleanups.push(startPerformanceTracking(send))
   }
@@ -170,6 +192,10 @@ export class Analytics {
     if (this.stopped) return
     this.engagement?.flush()
     const next = path ?? getPath()
+    // Record dedupe state so a router that calls page() alongside a pushState to
+    // the same path doesn't also emit an auto pageview for it.
+    this.lastViewPath = next
+    this.lastViewTime = Date.now()
     this.currentViewId = newViewId()
     this._send(buildPageViewPayload(next))
     this.engagement?.reset(next)
