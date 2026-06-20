@@ -55,10 +55,11 @@ export function extractCampaign(search: string): Campaign | undefined {
 }
 
 export function checkDNT(): boolean {
+  const nav = navigator as Navigator & { globalPrivacyControl?: boolean }
+  const win = window as Window & { doNotTrack?: string }
   return (
     navigator.doNotTrack === '1' ||
-    // @ts-expect-error legacy API
-    navigator.globalPrivacyControl === true ||
-    window.doNotTrack === '1'
+    nav.globalPrivacyControl === true ||
+    win.doNotTrack === '1'
   )
 }
