@@ -728,3 +728,312 @@ async fn collect_clamps_absurd_future_ts(pool: PgPool) {
         "clamped ts should sit within ~1 day of now, got {ts}"
     );
 }
+
+// ---- Tier 1 metrics ----
+
+#[sqlx::test]
+async fn vitals_breakdown_by_path_has_per_metric_counts(pool: PgPool) {
+    let app = router(test_state(pool.clone(), None, None));
+    let now = chrono::Utc::now().timestamp_millis();
+    // Two perf rows on /a: both carry lcp+cls, only one carries inp.
+    for pf in [
+        json!({"lcp": 2000.0, "cls": 0.05, "inp": 150.0, "ttfb": 300.0}),
+        json!({"lcp": 3000.0, "cls": 0.20, "ttfb": 500.0}),
+    ] {
+        let r = app
+            .clone()
+            .oneshot(post_collect(
+                json!({"t":"performance","s":"site-1","p":"/a","ts":now,"pf":pf}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::ACCEPTED);
+    }
+    wait_for_count(&pool, 2).await;
+
+    let resp = app
+        .oneshot(
+            Request::get("/stats/vitals?site=site-1&days=365&dim=path&limit=10")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let row = &body[0];
+    assert_eq!(row["key"], "/a");
+    assert_eq!(row["samples"], 2);
+    assert_eq!(row["lcpN"], 2);
+    assert_eq!(row["inpN"], 1, "only one row had inp; got {body}");
+    assert!(row["lcpP75"].as_f64().unwrap() >= 2000.0);
+}
+
+#[sqlx::test]
+async fn vitals_distribution_buckets_pass_rate(pool: PgPool) {
+    let app = router(test_state(pool.clone(), None, None));
+    let now = chrono::Utc::now().timestamp_millis();
+    for pf in [json!({"lcp": 2000.0}), json!({"lcp": 5000.0})] {
+        app.clone()
+            .oneshot(post_collect(
+                json!({"t":"performance","s":"s","p":"/","ts":now,"pf":pf}),
+            ))
+            .await
+            .unwrap();
+    }
+    wait_for_count(&pool, 2).await;
+
+    let resp = app
+        .oneshot(
+            Request::get("/stats/vitals?site=s&days=365")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    let lcp = &body["distribution"]["lcp"];
+    assert_eq!(lcp["good"], 1, "one lcp <= 2500; got {body}");
+    assert_eq!(lcp["poor"], 1, "one lcp > 4000");
+    assert_eq!(lcp["total"], 2);
+    assert_eq!(lcp["needsImprovement"], 0);
+}
+
+#[sqlx::test]
+async fn summary_reports_time_on_page_percentiles(pool: PgPool) {
+    let app = router(test_state(pool.clone(), None, None));
+    let now = chrono::Utc::now().timestamp_millis();
+    for dur in [1000, 2000, 3000] {
+        app.clone()
+            .oneshot(post_collect(
+                json!({"t":"pageleave","s":"s","p":"/","ts":now,"dur":dur}),
+            ))
+            .await
+            .unwrap();
+    }
+    wait_for_count(&pool, 3).await;
+
+    let resp = app
+        .oneshot(
+            Request::get("/stats/summary?site=s&days=365")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    assert_eq!(body["medianTimeOnPageMs"], 2000.0, "got {body}");
+    assert!(body["p75TimeOnPageMs"].as_f64().unwrap() >= 2000.0);
+}
+
+#[sqlx::test]
+async fn timeseries_reports_unique_visitors_when_enabled(pool: PgPool) {
+    let app = router(state_with(pool.clone(), None, None, true));
+    let now = chrono::Utc::now().timestamp_millis();
+    app.clone()
+        .oneshot(post_collect_ua(
+            json!({"t":"pageview","s":"s","p":"/","ts":now}),
+            "1.1.1.1",
+            CHROME_WIN,
+        ))
+        .await
+        .unwrap();
+    app.clone()
+        .oneshot(post_collect_ua(
+            json!({"t":"pageview","s":"s","p":"/","ts":now}),
+            "2.2.2.2",
+            CHROME_WIN,
+        ))
+        .await
+        .unwrap();
+    wait_for_count(&pool, 2).await;
+
+    let resp = app
+        .oneshot(
+            Request::get("/stats/timeseries?site=s&days=365&bucket=day")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    assert_eq!(body[0]["uniqueVisitors"], 2, "got {body}");
+}
+
+#[sqlx::test]
+async fn timeseries_omits_unique_visitors_when_disabled(pool: PgPool) {
+    let app = router(test_state(pool.clone(), None, None));
+    let now = chrono::Utc::now().timestamp_millis();
+    app.clone()
+        .oneshot(post_collect(
+            json!({"t":"pageview","s":"s","p":"/","ts":now}),
+        ))
+        .await
+        .unwrap();
+    wait_for_count(&pool, 1).await;
+
+    let resp = app
+        .oneshot(
+            Request::get("/stats/timeseries?site=s&days=365")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    assert!(
+        body[0].get("uniqueVisitors").is_none(),
+        "sessions off => omitted; got {body}"
+    );
+}
+
+#[sqlx::test]
+async fn heatmap_buckets_and_rejects_bad_tz(pool: PgPool) {
+    let app = router(test_state(pool.clone(), None, None));
+    let now = chrono::Utc::now().timestamp_millis();
+    app.clone()
+        .oneshot(post_collect(
+            json!({"t":"pageview","s":"s","p":"/","ts":now}),
+        ))
+        .await
+        .unwrap();
+    wait_for_count(&pool, 1).await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::get("/stats/heatmap?site=s&days=365&tz=UTC")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body.as_array().unwrap().len(), 1);
+    let wd = body[0]["weekday"].as_i64().unwrap();
+    assert!((1..=7).contains(&wd), "isodow 1-7; got {body}");
+    assert_eq!(body[0]["pageviews"], 1);
+
+    // Well-formed but non-existent tz -> Postgres rejects -> 400.
+    let resp = app
+        .oneshot(
+            Request::get("/stats/heatmap?site=s&days=365&tz=Not/AZone")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[sqlx::test]
+async fn channels_classifies_pageviews(pool: PgPool) {
+    let app = router(test_state(pool.clone(), None, None));
+    let now = chrono::Utc::now().timestamp_millis();
+    app.clone()
+        .oneshot(post_collect(
+            json!({"t":"pageview","s":"s","p":"/","ts":now,"r":"www.google.com"}),
+        ))
+        .await
+        .unwrap();
+    app.clone()
+        .oneshot(post_collect(
+            json!({"t":"pageview","s":"s","p":"/","ts":now}),
+        ))
+        .await
+        .unwrap();
+    app.clone()
+        .oneshot(post_collect(
+            json!({"t":"pageview","s":"s","p":"/","ts":now,"u":{"m":"cpc","s":"ads"}}),
+        ))
+        .await
+        .unwrap();
+    wait_for_count(&pool, 3).await;
+
+    let resp = app
+        .oneshot(
+            Request::get("/stats/channels?site=s&days=365")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    let mut map = std::collections::HashMap::new();
+    for row in body.as_array().unwrap() {
+        map.insert(
+            row["key"].as_str().unwrap().to_string(),
+            row["count"].as_i64().unwrap(),
+        );
+    }
+    assert_eq!(map.get("Organic Search"), Some(&1), "got {body}");
+    assert_eq!(map.get("Direct"), Some(&1));
+    assert_eq!(map.get("Paid"), Some(&1));
+}
+
+#[sqlx::test]
+async fn top_breaks_down_by_viewport(pool: PgPool) {
+    let app = router(test_state(pool.clone(), None, None));
+    let now = chrono::Utc::now().timestamp_millis();
+    for v in [1280, 1280, 390] {
+        app.clone()
+            .oneshot(post_collect(
+                json!({"t":"pageview","s":"s","p":"/","ts":now,"v":v}),
+            ))
+            .await
+            .unwrap();
+    }
+    wait_for_count(&pool, 3).await;
+
+    let resp = app
+        .oneshot(
+            Request::get("/stats/top?site=s&days=365&dim=viewport")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    // Numeric column must come back as a text key, not the "(none)" fallback.
+    assert_eq!(body[0]["key"], "1280", "got {body}");
+    assert_eq!(body[0]["count"], 2);
+}
+
+#[sqlx::test]
+async fn summary_compare_prev_returns_change(pool: PgPool) {
+    let app = router(test_state(pool.clone(), None, None));
+    let now = chrono::Utc::now().timestamp_millis();
+    let day = 24 * 60 * 60 * 1000_i64;
+    // current window [now-1d, now]: 2 pageviews
+    for _ in 0..2 {
+        app.clone()
+            .oneshot(post_collect(
+                json!({"t":"pageview","s":"s","p":"/","ts":now}),
+            ))
+            .await
+            .unwrap();
+    }
+    // previous window [now-2d, now-1d]: 1 pageview at now-1.5d
+    app.clone()
+        .oneshot(post_collect(
+            json!({"t":"pageview","s":"s","p":"/","ts": now - day - day / 2}),
+        ))
+        .await
+        .unwrap();
+    wait_for_count(&pool, 3).await;
+
+    let resp = app
+        .oneshot(
+            Request::get("/stats/summary?site=s&days=1&compare=prev")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    assert_eq!(body["pageviews"], 2, "got {body}");
+    assert_eq!(body["previous"]["pageviews"], 1);
+    assert_eq!(body["change"]["pageviews"], 100.0);
+}

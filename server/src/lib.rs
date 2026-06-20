@@ -1,3 +1,4 @@
+pub mod channels;
 pub mod config;
 pub mod contact;
 pub mod db;
@@ -73,6 +74,8 @@ pub fn router(state: AppState) -> Router {
         .route("/stats/top", get(stats::top))
         .route("/stats/events", get(stats::events))
         .route("/stats/vitals", get(stats::vitals))
+        .route("/stats/heatmap", get(stats::heatmap))
+        .route("/stats/channels", get(stats::channels))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_admin))
         .layer(cors_stats);
 
