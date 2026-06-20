@@ -1,6 +1,7 @@
 use crate::types::{
     Engagement, EngagementRow, HeatmapCell, MetricBucket, RawPayload, Realtime, ScrollFunnel,
-    Summary, TimeseriesPoint, TopDimension, TopRow, Vitals, VitalsDistribution, VitalsRow,
+    Sessions, Summary, TimeseriesPoint, TopDimension, TopRow, Vitals, VitalsDistribution,
+    VitalsRow,
 };
 
 const PAGELEAVE_DUR_MAX_MS: i32 = 1_800_000;
@@ -800,6 +801,111 @@ pub async fn engagement_by_path(
                 scroll_reach_75: (g("site_scroll_visits") > 0).then(|| frac(g("scrolled_75"))),
                 outbound_rate: (g("site_outbound_visits") > 0).then(|| frac(g("outbound_visits"))),
             }
+        })
+        .collect())
+}
+
+/// Sessionizes a site's pageviews (rung 3, opt-in). Partitions by `visitor_hash`
+/// (which already encodes the UTC day — the salt rotates daily), orders by client
+/// `ts`, and opens a new session whenever the gap exceeds `$4` ms. `$4` is a bind
+/// param. Reused by `sessions` and `session_pages`.
+const SESS_CTE: &str = "WITH pv AS (
+    SELECT visitor_hash, ts, path,
+           ts - lag(ts) OVER (PARTITION BY visitor_hash ORDER BY ts) AS gap
+    FROM analytics_events
+    WHERE site_id = $1 AND ts BETWEEN $2 AND $3
+      AND type = 'pageview' AND visitor_hash IS NOT NULL
+),
+marked AS (
+    SELECT *, sum(CASE WHEN gap IS NULL OR gap > $4 THEN 1 ELSE 0 END)
+                  OVER (PARTITION BY visitor_hash ORDER BY ts) AS session_seq
+    FROM pv
+),
+sess AS (
+    SELECT visitor_hash, session_seq,
+           count(*) AS pageviews,
+           max(ts) - min(ts) AS duration_ms,
+           (array_agg(path ORDER BY ts))[1]      AS entry_path,
+           (array_agg(path ORDER BY ts DESC))[1] AS exit_path
+    FROM marked
+    GROUP BY visitor_hash, session_seq
+)";
+
+/// Site-wide session aggregates. Empty (`sessions = 0`, rates `None`) when
+/// sessions are disabled or there is no `visitor_hash` data in range.
+pub async fn sessions(
+    pool: &PgPool,
+    site_id: &str,
+    from_ts: i64,
+    to_ts: i64,
+    gap_ms: i64,
+) -> sqlx::Result<Sessions> {
+    let sql = format!(
+        "{SESS_CTE}
+         SELECT count(*)::bigint AS sessions,
+                avg(pageviews)::float8 AS avg_pages,
+                (percentile_cont(0.5) WITHIN GROUP (ORDER BY pageviews::float8))::float8 AS median_pages,
+                avg(duration_ms)::float8 AS avg_duration,
+                (percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms::float8))::float8 AS median_duration,
+                avg((pageviews = 1)::int)::float8 AS bounce_rate
+         FROM sess"
+    );
+    let row = sqlx::query(&sql)
+        .bind(site_id)
+        .bind(from_ts)
+        .bind(to_ts)
+        .bind(gap_ms)
+        .fetch_one(pool)
+        .await?;
+
+    let pick = |k: &str| -> Option<f64> { row.try_get::<Option<f64>, _>(k).ok().flatten() };
+    Ok(Sessions {
+        sessions: row.try_get("sessions").unwrap_or(0),
+        avg_pages_per_session: pick("avg_pages"),
+        median_pages_per_session: pick("median_pages"),
+        avg_duration_ms: pick("avg_duration"),
+        median_duration_ms: pick("median_duration"),
+        bounce_rate: pick("bounce_rate"),
+    })
+}
+
+/// Top entry or exit pages by session count. `col` is an allowlisted column name
+/// (`entry_path` / `exit_path`) chosen by the handler — never user input.
+pub async fn session_pages(
+    pool: &PgPool,
+    site_id: &str,
+    from_ts: i64,
+    to_ts: i64,
+    gap_ms: i64,
+    col: &str,
+    limit: i64,
+) -> sqlx::Result<Vec<TopRow>> {
+    let sql = format!(
+        "{SESS_CTE}
+         SELECT {col} AS key, count(*)::bigint AS count
+         FROM sess WHERE {col} IS NOT NULL
+         GROUP BY {col} ORDER BY count DESC, key ASC LIMIT $5"
+    );
+    let rows = sqlx::query(&sql)
+        .bind(site_id)
+        .bind(from_ts)
+        .bind(to_ts)
+        .bind(gap_ms)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| TopRow {
+            key: r
+                .try_get::<Option<String>, _>("key")
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| "(none)".into()),
+            count: r.try_get("count").unwrap_or(0),
+            avg_dur_ms: None,
+            median_dur_ms: None,
         })
         .collect())
 }

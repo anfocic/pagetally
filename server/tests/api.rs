@@ -1285,3 +1285,157 @@ async fn engagement_events_per_visit_excludes_auto_instrumentation(pool: PgPool)
     // Only "signup" counts; scroll_depth + outbound are excluded.
     assert_eq!(body["avgEventsPerVisit"], 1.0, "got {body}");
 }
+
+// ---- Tier 3 metrics (sessions) ----
+
+#[sqlx::test]
+async fn sessions_basic_counts_and_bounce(pool: PgPool) {
+    let app = router(state_with(pool.clone(), None, None, true));
+    let now = chrono::Utc::now().timestamp_millis();
+    // Visitor A (one IP): 3 pageviews close in time -> one 3-page session.
+    for p in ["/a", "/b", "/c"] {
+        app.clone()
+            .oneshot(post_collect_ua(
+                json!({"t":"pageview","s":"s","p":p,"ts":now}),
+                "1.1.1.1",
+                CHROME_WIN,
+            ))
+            .await
+            .unwrap();
+    }
+    // Visitor B (different IP): a single pageview -> a bounce.
+    app.clone()
+        .oneshot(post_collect_ua(
+            json!({"t":"pageview","s":"s","p":"/a","ts":now}),
+            "2.2.2.2",
+            CHROME_WIN,
+        ))
+        .await
+        .unwrap();
+    wait_for_count(&pool, 4).await;
+
+    let resp = app
+        .oneshot(
+            Request::get("/stats/sessions?site=s&days=365")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["sessions"], 2, "got {body}");
+    assert_eq!(body["avgPagesPerSession"], 2.0, "(3 + 1) / 2; got {body}");
+    assert_eq!(
+        body["bounceRate"], 0.5,
+        "one of two sessions is single-page; got {body}"
+    );
+}
+
+#[sqlx::test]
+async fn sessions_split_on_30min_gap(pool: PgPool) {
+    let app = router(state_with(pool.clone(), None, None, true));
+    let now = chrono::Utc::now().timestamp_millis();
+    let forty_min = 40 * 60 * 1000;
+    // Same visitor (hash uses today's salt regardless of ts), two pageviews 40
+    // min apart -> the gap exceeds 30 min -> two sessions.
+    for ts in [now - forty_min, now] {
+        app.clone()
+            .oneshot(post_collect_ua(
+                json!({"t":"pageview","s":"s","p":"/a","ts":ts}),
+                "1.1.1.1",
+                CHROME_WIN,
+            ))
+            .await
+            .unwrap();
+    }
+    wait_for_count(&pool, 2).await;
+
+    let resp = app
+        .oneshot(
+            Request::get("/stats/sessions?site=s&days=365")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    assert_eq!(
+        body["sessions"], 2,
+        "40min gap splits the visit; got {body}"
+    );
+    assert_eq!(
+        body["bounceRate"], 1.0,
+        "both sessions are single-page; got {body}"
+    );
+}
+
+#[sqlx::test]
+async fn sessions_report_entry_and_exit_pages(pool: PgPool) {
+    let app = router(state_with(pool.clone(), None, None, true));
+    let now = chrono::Utc::now().timestamp_millis();
+    let min = 60 * 1000;
+    // One visitor, three pages in order inside the gap window.
+    for (p, ts) in [("/", now - 2 * min), ("/b", now - min), ("/c", now)] {
+        app.clone()
+            .oneshot(post_collect_ua(
+                json!({"t":"pageview","s":"s","p":p,"ts":ts}),
+                "1.1.1.1",
+                CHROME_WIN,
+            ))
+            .await
+            .unwrap();
+    }
+    wait_for_count(&pool, 3).await;
+
+    let entry = body_json(
+        app.clone()
+            .oneshot(
+                Request::get("/stats/sessions?site=s&days=365&dim=entry")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(entry[0]["key"], "/", "entry is the first page; got {entry}");
+
+    let exit = body_json(
+        app.oneshot(
+            Request::get("/stats/sessions?site=s&days=365&dim=exit")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(exit[0]["key"], "/c", "exit is the last page; got {exit}");
+}
+
+#[sqlx::test]
+async fn sessions_omitted_when_disabled(pool: PgPool) {
+    // Sessions off (default): no visitor_hash is derived, so no sessions exist.
+    let app = router(test_state(pool.clone(), None, None));
+    app.clone()
+        .oneshot(post_collect(json!({
+            "t":"pageview","s":"s","p":"/","ts":chrono::Utc::now().timestamp_millis()
+        })))
+        .await
+        .unwrap();
+    wait_for_count(&pool, 1).await;
+
+    let resp = app
+        .oneshot(
+            Request::get("/stats/sessions?site=s&days=365")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    assert_eq!(body["sessions"], 0, "got {body}");
+    assert!(body.get("avgPagesPerSession").is_none(), "got {body}");
+    assert!(body.get("bounceRate").is_none(), "got {body}");
+}

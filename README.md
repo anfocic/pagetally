@@ -68,6 +68,7 @@ GET /stats/heatmap?site=my-site&days=30&tz=Europe/Dublin
 GET /stats/channels?site=my-site&days=30
 GET /stats/realtime?site=my-site&minutes=5
 GET /stats/engagement?site=my-site&days=30
+GET /stats/sessions?site=my-site&days=30&gap=30
 ```
 
 `top?dim=path` returns `avgDurMs` and `medianDurMs` per path. `summary` returns `avgTimeOnPageMs`, `medianTimeOnPageMs`, and `p75TimeOnPageMs`. With sessions enabled (see below), `summary` also returns `uniqueVisitors` and `bounceRate`.
@@ -79,6 +80,7 @@ GET /stats/engagement?site=my-site&days=30
 - **`channels`** groups pageviews into marketing channels (Direct / Organic Search / Social / Paid / Campaign / Referral) from the referrer host + UTM tags. The brand lists are heuristic.
 - **`realtime`** returns `active` — distinct page-visits with any event in the last `minutes` (default 5, clamped 1–60) — plus the top active `pages`. It counts on the server's receive time (not the client clock) and needs no opt-in. Cookie-free, so "active" means page-visits in progress, not logged-in people.
 - **`engagement`** returns per-page-visit engagement (a visit = one `view_id`): `engagedVisitRate` (visible ≥10s OR scrolled ≥50% OR an outbound/download click), `avgEventsPerVisit` (your custom `track()` events; auto scroll/outbound events excluded), and — when the matching client tracking is on — `scrollReach75`, `outboundRate`, and a `scrollFunnel` (25/50/75/100). **`engagement?dim=path&limit=N`** returns the same per path. Scroll/outbound fields are **omitted** (not `0`) when the site emits no such events in range, so "not tracked" never reads as "0% engaged"; `engagedVisitRate` is then a lower bound resting on the time signal alone.
+- **`sessions`** (requires `SESSIONS_ENABLED`) groups a visitor's pageviews into sessions split by a `gap` of inactivity (minutes, default 30, clamped 1–240) and returns `sessions`, `avg`/`medianPagesPerSession`, `avg`/`medianDurationMs`, and a session-level `bounceRate`. **`sessions?dim=entry`** / **`dim=exit`** return the top entry / exit pages. A single-pageview session has duration 0. Because the visitor-hash salt rotates at 00:00 UTC, **sessions never cross midnight UTC** (a visit spanning it splits in two) — the same constraint behind `uniqueVisitors`. This `bounceRate` is single-pageview *sessions*; `summary.bounceRate` is single-pageview visitor-*days* — the session figure is the standard one.
 
 > **Note on `uniqueVisitors`:** the visitor hash is salted with a salt that rotates every UTC day (and is then deleted), so the same person hashes differently each day. Over a multi-day range `uniqueVisitors` therefore counts *visitor-days*, not distinct people — a visitor active on N days counts as N. This is a deliberate consequence of the cookie-free, unlinkable-by-design model. For a per-day figure, query a 1-day range per day.
 
