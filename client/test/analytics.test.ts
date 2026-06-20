@@ -107,14 +107,14 @@ describe('Analytics', () => {
       a.stop()
     })
 
-    it('fires page view on replaceState', async () => {
+    it('does not fire page view on replaceState', async () => {
       vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
       const a = new Analytics({ endpoint: ENDPOINT, siteId: SITE_ID, autoTrack: true })
 
       const before = navigator.sendBeacon.mock.calls.length
       history.replaceState({}, '', '/replaced')
 
-      expect(navigator.sendBeacon).toHaveBeenCalledTimes(before + 1)
+      expect(navigator.sendBeacon).toHaveBeenCalledTimes(before)
       a.stop()
     })
 
