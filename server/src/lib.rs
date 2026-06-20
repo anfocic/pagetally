@@ -159,7 +159,9 @@ pub fn router(state: AppState) -> Router {
         .route("/posts", get(blog::list).post(blog::create))
         .route(
             "/posts/:key",
-            get(blog::get_post).patch(blog::update).delete(blog::delete_post),
+            get(blog::get_post)
+                .patch(blog::update)
+                .delete(blog::delete_post),
         )
         .route("/posts/:key/view", post(blog::view));
 

@@ -82,13 +82,21 @@ async fn published_list_hides_drafts(pool: PgPool) {
     assert_eq!(body["posts"].as_array().unwrap().len(), 1);
     assert_eq!(body["posts"][0]["slug"], "published-1");
     // List items must not carry the markdown body.
-    assert!(body["posts"][0].get("body_markdown").is_none(), "got {body}");
+    assert!(
+        body["posts"][0].get("body_markdown").is_none(),
+        "got {body}"
+    );
 }
 
 #[sqlx::test]
 async fn status_all_requires_admin(pool: PgPool) {
     let app = router(state(pool, Some("t")));
-    create_post(&app, "t", json!({"slug":"p","title":"P","body_markdown":"x"})).await;
+    create_post(
+        &app,
+        "t",
+        json!({"slug":"p","title":"P","body_markdown":"x"}),
+    )
+    .await;
     create_post(
         &app,
         "t",
@@ -159,7 +167,11 @@ async fn single_draft_hidden_unless_admin(pool: PgPool) {
         .oneshot(request("GET", "/posts/secret2", None, None))
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::NOT_FOUND, "draft hidden to public");
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "draft hidden to public"
+    );
 
     let resp = app
         .oneshot(request("GET", "/posts/secret2", Some("t"), None))
@@ -182,7 +194,12 @@ async fn get_missing_is_404(pool: PgPool) {
 #[sqlx::test]
 async fn view_increments_published_and_noops_otherwise(pool: PgPool) {
     let app = router(state(pool, Some("t")));
-    create_post(&app, "t", json!({"slug":"post","title":"P","body_markdown":"x"})).await;
+    create_post(
+        &app,
+        "t",
+        json!({"slug":"post","title":"P","body_markdown":"x"}),
+    )
+    .await;
     create_post(
         &app,
         "t",
@@ -257,7 +274,10 @@ async fn create_then_get_round_trip(pool: PgPool) {
         "uuid id; got {created}"
     );
     let pd = created["pub_date"].as_str().unwrap();
-    assert!(pd.ends_with('Z'), "pub_date is UTC RFC3339 ending in Z; got {pd}");
+    assert!(
+        pd.ends_with('Z'),
+        "pub_date is UTC RFC3339 ending in Z; got {pd}"
+    );
 
     let fetched = body_json(
         app.oneshot(request("GET", "/posts/hello", None, None))
@@ -272,7 +292,12 @@ async fn create_then_get_round_trip(pool: PgPool) {
 #[sqlx::test]
 async fn create_applies_defaults(pool: PgPool) {
     let app = router(state(pool, Some("t")));
-    let created = create_post(&app, "t", json!({"slug":"min","title":"Min","body_markdown":"x"})).await;
+    let created = create_post(
+        &app,
+        "t",
+        json!({"slug":"min","title":"Min","body_markdown":"x"}),
+    )
+    .await;
     assert_eq!(created["author"], "Andrej Focic");
     assert_eq!(created["description"], "");
     assert_eq!(created["draft"], false);
@@ -283,7 +308,12 @@ async fn create_applies_defaults(pool: PgPool) {
 #[sqlx::test]
 async fn create_duplicate_slug_is_409(pool: PgPool) {
     let app = router(state(pool, Some("t")));
-    create_post(&app, "t", json!({"slug":"dup","title":"A","body_markdown":"x"})).await;
+    create_post(
+        &app,
+        "t",
+        json!({"slug":"dup","title":"A","body_markdown":"x"}),
+    )
+    .await;
     let resp = app
         .oneshot(request(
             "POST",
@@ -322,8 +352,18 @@ async fn admin_endpoints_reject_missing_and_bad_token(pool: PgPool) {
     let cases = [
         request("POST", "/posts", None, Some(valid.clone())),
         request("POST", "/posts", Some("nope"), Some(valid.clone())),
-        request("PATCH", &format!("/posts/{nil}"), None, Some(json!({"title":"z"}))),
-        request("PATCH", &format!("/posts/{nil}"), Some("nope"), Some(json!({"title":"z"}))),
+        request(
+            "PATCH",
+            &format!("/posts/{nil}"),
+            None,
+            Some(json!({"title":"z"})),
+        ),
+        request(
+            "PATCH",
+            &format!("/posts/{nil}"),
+            Some("nope"),
+            Some(json!({"title":"z"})),
+        ),
         request("DELETE", &format!("/posts/{nil}"), None, None),
         request("DELETE", &format!("/posts/{nil}"), Some("nope"), None),
     ];
@@ -337,7 +377,12 @@ async fn admin_endpoints_reject_missing_and_bad_token(pool: PgPool) {
 #[sqlx::test]
 async fn update_patches_subset_and_sets_updated_date(pool: PgPool) {
     let app = router(state(pool, Some("t")));
-    let created = create_post(&app, "t", json!({"slug":"u","title":"Old","body_markdown":"x"})).await;
+    let created = create_post(
+        &app,
+        "t",
+        json!({"slug":"u","title":"Old","body_markdown":"x"}),
+    )
+    .await;
     let id = created["id"].as_str().unwrap().to_string();
     assert!(created["updated_date"].is_null());
 
@@ -355,7 +400,10 @@ async fn update_patches_subset_and_sets_updated_date(pool: PgPool) {
     let body = body_json(resp).await;
     assert_eq!(body["title"], "New");
     assert_eq!(body["draft"], true);
-    assert!(!body["updated_date"].is_null(), "updated_date set; got {body}");
+    assert!(
+        !body["updated_date"].is_null(),
+        "updated_date set; got {body}"
+    );
     // Untouched fields are preserved.
     assert_eq!(body["body_markdown"], "x");
     assert_eq!(body["slug"], "u");
@@ -376,7 +424,12 @@ async fn update_patches_subset_and_sets_updated_date(pool: PgPool) {
 #[sqlx::test]
 async fn delete_removes_then_404s(pool: PgPool) {
     let app = router(state(pool, Some("t")));
-    let created = create_post(&app, "t", json!({"slug":"del","title":"D","body_markdown":"x"})).await;
+    let created = create_post(
+        &app,
+        "t",
+        json!({"slug":"del","title":"D","body_markdown":"x"}),
+    )
+    .await;
     let id = created["id"].as_str().unwrap().to_string();
 
     let resp = app
@@ -467,19 +520,37 @@ async fn malformed_uuid_is_404_on_patch_and_delete(pool: PgPool) {
         ))
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::NOT_FOUND, "PATCH bad uuid -> 404 not 500");
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "PATCH bad uuid -> 404 not 500"
+    );
     let resp = app
         .oneshot(request("DELETE", "/posts/not-a-uuid", Some("t"), None))
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::NOT_FOUND, "DELETE bad uuid -> 404 not 500");
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "DELETE bad uuid -> 404 not 500"
+    );
 }
 
 #[sqlx::test]
 async fn update_rename_to_existing_slug_is_409(pool: PgPool) {
     let app = router(state(pool, Some("t")));
-    create_post(&app, "t", json!({"slug":"a","title":"A","body_markdown":"x"})).await;
-    let b = create_post(&app, "t", json!({"slug":"b","title":"B","body_markdown":"x"})).await;
+    create_post(
+        &app,
+        "t",
+        json!({"slug":"a","title":"A","body_markdown":"x"}),
+    )
+    .await;
+    let b = create_post(
+        &app,
+        "t",
+        json!({"slug":"b","title":"B","body_markdown":"x"}),
+    )
+    .await;
     let id = b["id"].as_str().unwrap();
 
     let resp = app
@@ -497,7 +568,12 @@ async fn update_rename_to_existing_slug_is_409(pool: PgPool) {
 #[sqlx::test]
 async fn update_validates_only_present_fields(pool: PgPool) {
     let app = router(state(pool, Some("t")));
-    let created = create_post(&app, "t", json!({"slug":"v","title":"T","body_markdown":"x"})).await;
+    let created = create_post(
+        &app,
+        "t",
+        json!({"slug":"v","title":"T","body_markdown":"x"}),
+    )
+    .await;
     let id = created["id"].as_str().unwrap().to_string();
 
     for bad in [
@@ -507,7 +583,12 @@ async fn update_validates_only_present_fields(pool: PgPool) {
     ] {
         let resp = app
             .clone()
-            .oneshot(request("PATCH", &format!("/posts/{id}"), Some("t"), Some(bad.clone())))
+            .oneshot(request(
+                "PATCH",
+                &format!("/posts/{id}"),
+                Some("t"),
+                Some(bad.clone()),
+            ))
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "body {bad}");
@@ -541,7 +622,11 @@ async fn open_mode_treats_caller_as_admin_when_token_unset(pool: PgPool) {
         ))
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::CREATED, "create open without a token");
+    assert_eq!(
+        resp.status(),
+        StatusCode::CREATED,
+        "create open without a token"
+    );
 
     let body = body_json(
         app.clone()
@@ -562,7 +647,12 @@ async fn open_mode_treats_caller_as_admin_when_token_unset(pool: PgPool) {
 #[sqlx::test]
 async fn drafts_opt_in_only_on_literal_status_all(pool: PgPool) {
     let app = router(state(pool, Some("t")));
-    create_post(&app, "t", json!({"slug":"p","title":"P","body_markdown":"x"})).await;
+    create_post(
+        &app,
+        "t",
+        json!({"slug":"p","title":"P","body_markdown":"x"}),
+    )
+    .await;
     create_post(
         &app,
         "t",
@@ -579,7 +669,10 @@ async fn drafts_opt_in_only_on_literal_status_all(pool: PgPool) {
                 .unwrap(),
         )
         .await;
-        assert_eq!(body["total"], 1, "q={q:?} should exclude drafts; got {body}");
+        assert_eq!(
+            body["total"], 1,
+            "q={q:?} should exclude drafts; got {body}"
+        );
     }
 }
 

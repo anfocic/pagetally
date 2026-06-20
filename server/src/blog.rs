@@ -140,10 +140,13 @@ pub async fn list(
 ) -> Result<Json<ListResponse>, StatusCode> {
     let limit = q.limit.clamp(1, 100) as i64;
     let offset = q.offset as i64;
-    let include_drafts =
-        crate::is_admin(&state, &headers) && q.status.as_deref() == Some("all");
+    let include_drafts = crate::is_admin(&state, &headers) && q.status.as_deref() == Some("all");
 
-    let where_clause = if include_drafts { "" } else { "WHERE draft = false" };
+    let where_clause = if include_drafts {
+        ""
+    } else {
+        "WHERE draft = false"
+    };
 
     let posts = sqlx::query_as::<_, PostMeta>(&format!(
         "SELECT {META_COLS} FROM blog_posts {where_clause} ORDER BY pub_date DESC LIMIT $1 OFFSET $2"
@@ -154,11 +157,10 @@ pub async fn list(
     .await
     .map_err(|e| internal("blog list query failed", &e))?;
 
-    let total: i64 =
-        sqlx::query_scalar(&format!("SELECT count(*) FROM blog_posts {where_clause}"))
-            .fetch_one(&state.pool)
-            .await
-            .map_err(|e| internal("blog count query failed", &e))?;
+    let total: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM blog_posts {where_clause}"))
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|e| internal("blog count query failed", &e))?;
 
     Ok(Json(ListResponse { posts, total }))
 }
@@ -260,7 +262,10 @@ pub async fn update(
         return Err(StatusCode::BAD_REQUEST);
     }
     if body.title.as_deref().is_some_and(|t| t.trim().is_empty())
-        || body.body_markdown.as_deref().is_some_and(|b| b.trim().is_empty())
+        || body
+            .body_markdown
+            .as_deref()
+            .is_some_and(|b| b.trim().is_empty())
     {
         return Err(StatusCode::BAD_REQUEST);
     }
