@@ -32,7 +32,7 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: pagetally_test
+          POSTGRES_DB: dullahan_test
         ports:
           - 5432:5432
         options: >-
@@ -41,7 +41,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      DATABASE_URL: postgres://postgres:postgres@localhost:5432/pagetally_test
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/dullahan_test
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -59,7 +59,7 @@ jobs:
         env:
           BIND_ADDR: 127.0.0.1:3001
         run: |
-          cargo run --locked --bin pagetally-server &
+          cargo run --locked --bin dullahan &
           PID=$!
           for i in $(seq 1 30); do
             sleep 1
@@ -86,8 +86,8 @@ jobs:
         # so rsa code is never linked into the runtime binary.
         run: cargo audit --ignore RUSTSEC-2023-0071
 
-  client:
-    name: client (vitest)
+  tracker:
+    name: tracker (vitest + vendored pt.js)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -95,15 +95,19 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: client/package-lock.json
-      - working-directory: client
+          cache-dependency-path: tracker/package-lock.json
+      - working-directory: tracker
         run: npm ci
-      - working-directory: client
+      - working-directory: tracker
         run: npm run typecheck
-      - working-directory: client
+      - working-directory: tracker
         run: npm test
-      - working-directory: client
+      - working-directory: tracker
         run: npm run build
+      # Option A: the server compiles in server/assets/pt.js and serves it at
+      # /pt.js. Fail if the committed asset has drifted from a fresh build.
+      - name: vendored pt.js is fresh
+        run: diff -q tracker/dist/pt.js server/assets/pt.js
 
   e2e:
     name: e2e (playwright)
@@ -113,7 +117,7 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: pagetally_e2e
+          POSTGRES_DB: dullahan_e2e
         ports:
           - 5432:5432
         options: >-
@@ -122,7 +126,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      DATABASE_URL: postgres://postgres:postgres@localhost:5432/pagetally_e2e
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/dullahan_e2e
       CI: "1"
     steps:
       - uses: actions/checkout@v4
@@ -133,10 +137,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      # run-server.sh builds the client (for /pt.js) then runs the server.
-      - name: install client deps
-        working-directory: client
-        run: npm ci
       - name: install e2e deps
         working-directory: e2e
         run: npm ci

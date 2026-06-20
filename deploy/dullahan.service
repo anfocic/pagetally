@@ -1,15 +1,15 @@
 [Unit]
-Description=pagetally analytics server
+Description=dullahan analytics server
 After=network.target postgresql.service
 Wants=postgresql.service
 
 [Service]
 Type=simple
-User=pagetally
-Group=pagetally
-WorkingDirectory=/opt/pagetally
-EnvironmentFile=/opt/pagetally/pagetally.env
-ExecStart=/opt/pagetally/pagetally-server
+User=dullahan
+Group=dullahan
+WorkingDirectory=/opt/dullahan
+EnvironmentFile=/opt/dullahan/dullahan.env
+ExecStart=/opt/dullahan/dullahan
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
@@ -19,7 +19,7 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/opt/pagetally
+ReadWritePaths=/opt/dullahan
 LimitNOFILE=65535
 
 [Install]

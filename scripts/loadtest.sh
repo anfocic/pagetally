@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Quick load test for a running pagetally server.
+# Quick load test for a running dullahan server.
 #
 # Requirements:
 #   brew install oha    # or: apt install oha

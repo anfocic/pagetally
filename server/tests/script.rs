@@ -1,7 +1,7 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
+use dullahan::{config::Config, router, state::AppState};
 use http_body_util::BodyExt;
-use pagetally_server::{config::Config, router, state::AppState};
 use sqlx::PgPool;
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -21,7 +21,7 @@ fn test_state(pool: PgPool) -> AppState {
         }),
         pool,
         mailer: None,
-        salt_cache: pagetally_server::salt::new_cache(),
+        salt_cache: dullahan::salt::new_cache(),
     }
 }
 

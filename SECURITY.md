@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-If you believe you've found a security issue in pagetally, please **do not** open a public GitHub issue.
+If you believe you've found a security issue in dullahan, please **do not** open a public GitHub issue.
 
 Instead, use GitHub's private vulnerability reporting on this repository (Security → Report a vulnerability), or email the maintainer listed in `Cargo.toml` / `package.json`. Include:
 
@@ -24,7 +24,7 @@ In scope:
 Out of scope:
 
 - Operator misconfiguration (e.g. running without `ADMIN_TOKEN` on the public internet — the server warns about this at startup)
-- Issues in third-party services (Postgres, Caddy, Resend) unless triggered by an unsafe default in pagetally
+- Issues in third-party services (Postgres, Caddy, Resend) unless triggered by an unsafe default in dullahan
 - Vulnerabilities in old, unsupported versions
 
 ## Hardening notes for operators
@@ -38,4 +38,4 @@ Out of scope:
 
 ## Known advisories
 
-- **RUSTSEC-2023-0071** (`rsa` Marvin attack) appears in `cargo audit`. `rsa` is pulled transitively via `sqlx-mysql` for `sqlx` compile-time macros. Pagetally enables only the `postgres` feature of `sqlx`, so `rsa` is never linked into the runtime binary. CI passes `--ignore RUSTSEC-2023-0071` for this reason; the ignore will be dropped once upstream `sqlx` no longer pulls `sqlx-mysql` transitively.
+- **RUSTSEC-2023-0071** (`rsa` Marvin attack) appears in `cargo audit`. `rsa` is pulled transitively via `sqlx-mysql` for `sqlx` compile-time macros. Dullahan enables only the `postgres` feature of `sqlx`, so `rsa` is never linked into the runtime binary. CI passes `--ignore RUSTSEC-2023-0071` for this reason; the ignore will be dropped once upstream `sqlx` no longer pulls `sqlx-mysql` transitively.

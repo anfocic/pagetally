@@ -1,4 +1,4 @@
-# pagetally — contributor guide
+# dullahan — contributor guide
 
 GDPR-compliant, cookie-free web analytics. A TypeScript browser client that POSTs
 events to a self-hostable Rust ingest + read API backed by Postgres.
@@ -10,8 +10,8 @@ how to **work on** the repo.
 
 | Path | What |
 |---|---|
-| `client/` | Browser SDK (TypeScript, built with tsup, tested with vitest). npm package `pagetally`. |
-| `server/` | Ingest + read API (Rust + Axum + sqlx + Postgres). Crate `pagetally-server`. |
+| `client/` | Browser SDK (TypeScript, built with tsup, tested with vitest). npm package `dullahan`. |
+| `server/` | Ingest + read API (Rust + Axum + sqlx + Postgres). Crate `dullahan`. |
 | `server/migrations/` | sqlx SQL migrations, applied automatically on server startup. |
 | `deploy/` | Self-host: `install.sh`, systemd unit, `Caddyfile`, env example, dashboard-cred gen. |
 | `scripts/` | `loadtest.sh` (oha wrapper). |
@@ -22,12 +22,12 @@ how to **work on** the repo.
 **Server** (from `server/`):
 ```bash
 cargo build --locked
-DATABASE_URL=postgres://fole@localhost/pagetally_test cargo test --locked   # needs Postgres
+DATABASE_URL=postgres://fole@localhost/dullahan_test cargo test --locked   # needs Postgres
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 ```
 Tests use `#[sqlx::test]`, which spins up an ephemeral DB per test from
-`DATABASE_URL` (a `pagetally_test` DB with CREATEDB rights must exist locally).
+`DATABASE_URL` (a `dullahan_test` DB with CREATEDB rights must exist locally).
 
 **Client** (from `client/`):
 ```bash

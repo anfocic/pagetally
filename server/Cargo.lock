@@ -369,6 +369,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
+name = "dullahan"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "axum-prometheus",
+ "base64",
+ "chrono",
+ "http-body-util",
+ "metrics",
+ "rand 0.8.6",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tower 0.4.13",
+ "tower-http 0.5.2",
+ "tower_governor",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1279,32 +1305,6 @@ name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
-
-[[package]]
-name = "pagetally-server"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "axum",
- "axum-prometheus",
- "base64",
- "chrono",
- "http-body-util",
- "metrics",
- "rand 0.8.6",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "sqlx",
- "thiserror 1.0.69",
- "tokio",
- "tower 0.4.13",
- "tower-http 0.5.2",
- "tower_governor",
- "tracing",
- "tracing-subscriber",
-]
 
 [[package]]
 name = "parking"

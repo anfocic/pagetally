@@ -25,7 +25,7 @@ export type {
   PerformanceMetrics,
 } from './types'
 
-const INSTANCE_KEY = '__pagetally_active__'
+const INSTANCE_KEY = '__dullahan_active__'
 
 // Ephemeral per-view id: regenerated on every page view, kept only in memory,
 // never persisted. Groups the events of a single pageload without being a
@@ -75,7 +75,7 @@ export class Analytics {
     if (w[INSTANCE_KEY]) {
       if (typeof console !== 'undefined') {
         console.warn(
-          'pagetally: an Analytics instance is already running on this page; new instance disabled',
+          'dullahan: an Analytics instance is already running on this page; new instance disabled',
         )
       }
       this.stopped = true

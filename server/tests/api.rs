@@ -1,7 +1,7 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
+use dullahan::{config::Config, router, router_with_metrics, state::AppState};
 use http_body_util::BodyExt;
-use pagetally_server::{config::Config, router, router_with_metrics, state::AppState};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -36,7 +36,7 @@ fn state_with(
         }),
         pool,
         mailer: None,
-        salt_cache: pagetally_server::salt::new_cache(),
+        salt_cache: dullahan::salt::new_cache(),
     }
 }
 
@@ -609,7 +609,7 @@ async fn top_breaks_down_by_browser_when_enabled(pool: PgPool) {
 
 #[sqlx::test]
 async fn salt_rotates_daily_and_keeps_48h(pool: PgPool) {
-    use pagetally_server::salt::{current_salt, new_cache};
+    use dullahan::salt::{current_salt, new_cache};
     let cache = new_cache();
     let d1 = chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
     let d2 = chrono::NaiveDate::from_ymd_opt(2026, 1, 2).unwrap();
@@ -1672,7 +1672,7 @@ async fn stats_cors_accepts_wildcard_origin(pool: PgPool) {
         }),
         pool,
         mailer: None,
-        salt_cache: pagetally_server::salt::new_cache(),
+        salt_cache: dullahan::salt::new_cache(),
     };
     let app = router(state);
     let resp = app

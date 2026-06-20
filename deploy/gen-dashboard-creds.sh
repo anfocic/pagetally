@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Generate credentials for a dashboard that consumes pagetally:
+# Generate credentials for a dashboard that consumes dullahan:
 #   - ADMIN_USERNAME      (plain)
 #   - ADMIN_PASSWORD_HASH (argon2id PHC string)
 #   - SESSION_SECRET      (32 random bytes, hex)

@@ -29,13 +29,13 @@ test('server-hosted /pt.js tracks pageviews and custom events end to end', async
   await page.goto(FIXTURE_URL)
 
   // The served script self-initialized and exposed the global.
-  await page.waitForFunction(() => 'pagetally' in window)
+  await page.waitForFunction(() => 'dullahan' in window)
 
   // Fire a custom event the way an inline page script would.
   await page.evaluate(() => {
     ;(
-      window as unknown as { pagetally: { track: (n: string, p?: unknown) => void } }
-    ).pagetally.track('signup', { plan: 'pro' })
+      window as unknown as { dullahan: { track: (n: string, p?: unknown) => void } }
+    ).dullahan.track('signup', { plan: 'pro' })
   })
 
   const api = await request.newContext()

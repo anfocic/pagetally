@@ -1,21 +1,21 @@
 [package]
-name = "pagetally-server"
+name = "dullahan"
 version = "0.2.0"
 edition = "2024"
 license = "MIT"
-description = "GDPR-compliant, cookie-free web analytics ingest + read API"
-repository = "https://github.com/anfocic/pagetally"
-homepage = "https://github.com/anfocic/pagetally"
-readme = "../README.md"
-keywords = ["analytics", "privacy", "gdpr"]
+description = "A self-hosted, cookie-free backend for small sites: privacy-first analytics, a headless blog/content API, and a contact endpoint — one Rust binary that serves its own tracker."
+repository = "https://github.com/anfocic/dullahan"
+homepage = "https://github.com/anfocic/dullahan"
+readme = "README.md"
+keywords = ["analytics", "privacy", "headless", "self-hosted", "backend"]
 categories = ["web-programming::http-server"]
 
 [[bin]]
-name = "pagetally-server"
+name = "dullahan"
 path = "src/main.rs"
 
 [lib]
-name = "pagetally_server"
+name = "dullahan"
 path = "src/lib.rs"
 
 [dependencies]

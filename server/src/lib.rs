@@ -271,10 +271,12 @@ async fn health() -> &'static str {
     "ok"
 }
 
-/// The browser tracking client, embedded at build time (see build.rs). Served so
-/// adopters can drop in a single `<script src="…/pt.js" data-site="…">` tag with
-/// no npm install or build step.
-const SCRIPT_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/pt.js"));
+/// The browser tracking client, vendored at `assets/pt.js` and compiled into the
+/// binary. Served so adopters can drop in a single
+/// `<script src="…/pt.js" data-site="…">` tag with no npm install or build step.
+/// Rebuild it from `tracker/` (`npm run build`) and re-commit `assets/pt.js` when
+/// the tracker changes; `include_str!` fails the build if it is missing.
+const SCRIPT_JS: &str = include_str!("../assets/pt.js");
 
 async fn serve_script() -> impl IntoResponse {
     (

@@ -1,16 +1,16 @@
 //! Wire-contract tests: the server must accept exactly the payloads the client
-//! emits. These deserialize the shared fixtures in client/test/fixtures/wire/
+//! emits. These deserialize the shared fixtures in tracker/test/fixtures/wire/
 //! (the same files the client's contract.test.ts asserts its builders produce),
 //! so a field rename or type change on either side of the TS<->Rust boundary
 //! breaks CI instead of silently dropping data in production.
 
-use pagetally_server::types::RawPayload;
+use dullahan::types::RawPayload;
 
 macro_rules! fixture {
     ($path:literal) => {
         include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../client/test/fixtures/wire/",
+            "/../tracker/test/fixtures/wire/",
             $path
         ))
     };

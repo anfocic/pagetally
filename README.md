@@ -1,15 +1,17 @@
-# pagetally
+# Dullahan
 
-GDPR-compliant, cookie-free web analytics. Browser client + self-hostable Rust server.
+**The headless backend for your site.** A self-hosted, cookie-free Rust binary that gives a small site three things over plain HTTP: privacy-first **analytics**, a headless **blog/content API**, and a **contact** endpoint. It serves its own browser tracker at `/pt.js` — no separate package to install.
 
-New here? [`OVERVIEW.md`](OVERVIEW.md) is a tour of what the app does; [`CLAUDE.md`](CLAUDE.md) is the contributor guide.
+*Acephalous by design — the head is gone; the body does the work.*
 
-## Two parts
+New here? [`OVERVIEW.md`](OVERVIEW.md) is a tour of what it does; [`CLAUDE.md`](CLAUDE.md) is the contributor guide.
+
+## One binary
 
 | Path | What | Install |
 |---|---|---|
-| `client/` | Browser client (TypeScript) | a `<script>` tag the server hosts, or `npm i pagetally` |
-| `server/` | Ingest + read API (Rust + Postgres) | `cargo install pagetally-server` |
+| `server/` | The whole backend — ingest, stats, blog, contact (Rust + Postgres) | `cargo install dullahan` |
+| `tracker/` | Browser tracking client (a TypeScript build tool) — compiled into the server and served at `/pt.js`; not published | — |
 
 ## Quick start
 
@@ -51,42 +53,16 @@ the script. Opt-ins are `data-*` attributes:
 Fire custom events from inline scripts via the global the tag exposes:
 
 ```js
-window.pagetally.track("signup", { plan: "pro" });
-window.pagetally.page("/virtual-path");
+window.dullahan.track("signup", { plan: "pro" });
+window.dullahan.page("/virtual-path");
 ```
 
 See [`examples/script-tag.html`](examples/script-tag.html).
 
-**Advanced — npm package.** For bundled apps (SPAs) that prefer to import and
-control the instance directly:
-
-```bash
-npm i pagetally
-```
-
-```ts
-import { Analytics } from "pagetally";
-
-new Analytics({
-  siteId: "my-site",
-  endpoint: "https://analytics.example.com/collect",
-  respectDNT: true,
-});
-```
-
-| Option | Default | What |
-|---|---|---|
-| `siteId` | — (required) | Site identifier sent with every event |
-| `endpoint` | — (required) | URL of the server `/collect` endpoint |
-| `autoTrack` | `true` | Auto-fire pageviews on load and SPA navigation |
-| `respectDNT` | `false` | Send nothing when DNT / GPC is on |
-| `trackScroll` | `false` | Emit `scroll_depth` events at 25/50/75/100% |
-| `trackOutboundLinks` | `false` | Emit `outbound` / `download` events on link clicks |
-
-Both paths send the identical wire payload and run the same tracking code; the
-`<script>` tag is the same client, just hosted by the server and configured from
-attributes. UTM tags (`utm_source` / `utm_medium` / `utm_campaign`) on the
-landing URL are always captured and attached to the pageview — no flag needed.
+UTM tags (`utm_source` / `utm_medium` / `utm_campaign`) on the landing URL are
+always captured and attached to the pageview — no flag needed. To change the
+tracker, edit `tracker/`, run `npm run build`, and re-commit `server/assets/pt.js`
+(CI fails if the vendored script drifts from a fresh build).
 
 ### 3. Read stats
 
@@ -126,7 +102,7 @@ GET /stats/funnel?site=my-site&days=30&steps=/,/pricing,/signup
 
 ## Blog API
 
-An optional set of endpoints for storing blog posts and counting per-post views, intended for an SSR frontend that talks to pagetally server-to-server. Responses are JSON with **snake_case** keys (unlike `/stats/*`, which is camelCase). Markdown is stored and returned **raw** in `body_markdown` — it is never rendered to HTML server-side; the caller sanitizes and renders it.
+An optional set of endpoints for storing blog posts and counting per-post views, intended for an SSR frontend that talks to dullahan server-to-server. Responses are JSON with **snake_case** keys (unlike `/stats/*`, which is camelCase). Markdown is stored and returned **raw** in `body_markdown` — it is never rendered to HTML server-side; the caller sanitizes and renders it.
 
 ```
 GET    /posts?limit=20&offset=0&status=published   # list (status=all incl. drafts needs admin)
@@ -167,7 +143,7 @@ Server env vars:
 | `ALLOWED_SITES` | no | unrestricted |
 | `RESEND_API_KEY` | no | (disables email) |
 | `EMAIL_FROM` | no | — |
-| `EMAIL_FROM_NAME` | no | `pagetally` |
+| `EMAIL_FROM_NAME` | no | `dullahan` |
 | `CONTACT_TO` | no | (disables `/contact`) |
 | `STATS_ORIGINS` | no | `*` (any origin) |
 | `BEHIND_TLS` | no | `false` (disables HSTS) |
@@ -191,14 +167,14 @@ The defaults are safe for a private deploy. For a public-internet host:
 
 The library doesn't fingerprint or store IPs, but two channels can still leak PII if you're not careful:
 
-- **URL paths.** `pagetally` strips `?query` and `#hash` but not path segments. A path like `/users/jane@example.com/orders/42` will be stored verbatim. Strip or hash sensitive segments client-side before navigating, or pass a sanitized path to `analytics.page(path)`.
+- **URL paths.** `dullahan` strips `?query` and `#hash` but not path segments. A path like `/users/jane@example.com/orders/42` will be stored verbatim. Strip or hash sensitive segments client-side before navigating, or pass a sanitized path to `analytics.page(path)`.
 - **Custom event props.** `analytics.track(name, props)` stores `props` as-is. Don't pass emails, names, or tokens. Use a stable `userId` hash if you need correlation.
 
 ## Metrics
 
 `GET /metrics` exposes Prometheus-format metrics for HTTP traffic (request rate, latency histograms, status codes per route). Scrape it with Prometheus / Grafana Agent / Vector.
 
-The endpoint is **unauthenticated** — keep it on an internal interface or block external access at your reverse proxy. Standard practice for `/metrics` everywhere; pagetally follows the convention.
+The endpoint is **unauthenticated** — keep it on an internal interface or block external access at your reverse proxy. Standard practice for `/metrics` everywhere; dullahan follows the convention.
 
 ```
 # HELP axum_http_requests_total Total HTTP requests.
