@@ -13,6 +13,7 @@ pub async fn collect(
         tracing::debug!(reason, "rejected /collect payload");
         return StatusCode::BAD_REQUEST;
     }
+    payload.clamp_ts(chrono::Utc::now().timestamp_millis());
 
     let site_id = payload.site_id();
     if let Some(allowed) = &state.config.allowed_sites

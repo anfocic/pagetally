@@ -14,6 +14,13 @@ export function startPerformanceTracking(
     ttfb: 0,
   }
 
+  // CLS is legitimately 0 on stable pages. Report it whenever the API exists
+  // (even at 0) instead of only when > 0, so the server-side p75 isn't biased
+  // upward by silently dropping every zero-shift page.
+  const clsSupported =
+    typeof PerformanceObserver !== 'undefined' &&
+    (PerformanceObserver.supportedEntryTypes ?? []).includes('layout-shift')
+
   const onHidden = () => {
     if (document.visibilityState === 'hidden') flush()
   }
@@ -32,7 +39,7 @@ export function startPerformanceTracking(
     const clean: PerformanceMetrics = {}
     if (metrics.lcp > 0) clean.lcp = Math.round(metrics.lcp)
     if (metrics.fcp > 0) clean.fcp = Math.round(metrics.fcp)
-    if (metrics.cls > 0) clean.cls = Math.round(metrics.cls * 10000) / 10000
+    if (clsSupported) clean.cls = Math.round(metrics.cls * 10000) / 10000
     if (metrics.inp > 0) clean.inp = Math.round(metrics.inp)
     if (metrics.ttfb > 0) clean.ttfb = Math.round(metrics.ttfb)
 
@@ -91,19 +98,22 @@ export function startPerformanceTracking(
     observers.push(obs)
   } catch {}
 
-  // INP (via first-input)
+  // INP — worst interaction latency across the page (input → next paint).
+  // PerformanceEventTiming.duration is the full interaction time, so the max
+  // is a close approximation of Interaction to Next Paint. (The old code
+  // reported processingStart - startTime, which is FID — a different,
+  // now-deprecated metric that reads far better than real INP.)
   try {
     const obs = new PerformanceObserver((list) => {
-      for (const entry of list.getEntries() as PerformanceEntry[]) {
-        const fi = entry as unknown as {
-          processingStart?: number
-        }
-        if (fi.processingStart !== undefined) {
-          metrics.inp = fi.processingStart - entry.startTime
-        }
+      for (const entry of list.getEntries()) {
+        if (entry.duration > metrics.inp) metrics.inp = entry.duration
       }
     })
-    obs.observe({ type: 'first-input', buffered: true })
+    obs.observe({
+      type: 'event',
+      durationThreshold: 40,
+      buffered: true,
+    } as PerformanceObserverInit & { durationThreshold: number })
     observers.push(obs)
   } catch {}
 
