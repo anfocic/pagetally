@@ -66,6 +66,9 @@ pub async fn collect(
         )
         .await
         {
+            // Ingest is fire-and-forget (202 already returned), so a failed insert
+            // is otherwise invisible. Count it so silent data loss is alertable.
+            metrics::counter!("pagetally_ingest_insert_failures_total").increment(1);
             tracing::warn!(error = %err, "failed to insert event");
         }
     });

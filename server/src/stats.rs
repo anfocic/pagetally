@@ -164,7 +164,10 @@ pub async fn summary(
 
     let (previous, change) = if q.compare.as_deref() == Some("prev") {
         let span = to_ts - from_ts;
-        let prev = crate::db::summary(&state.pool, &q.site, from_ts - span, from_ts)
+        // Upper bound is from_ts - 1: the current window's BETWEEN is inclusive of
+        // from_ts, so sharing that boundary would double-count an event at exactly
+        // from_ts in both windows.
+        let prev = crate::db::summary(&state.pool, &q.site, from_ts - span, from_ts - 1)
             .await
             .map_err(|err| {
                 tracing::error!(error = %err, "summary compare query failed");
@@ -429,6 +432,15 @@ pub async fn funnel(
         .collect();
     if !(2..=10).contains(&steps.len()) || steps.iter().any(|s| s.len() > MAX_PATH) {
         return Err(StatusCode::BAD_REQUEST);
+    }
+    // Duplicate steps break the funnel: array_position() maps every occurrence of
+    // a path to its first index, so a repeated step can never be reached and its
+    // conversion is a false 0. Reject rather than report wrong numbers.
+    {
+        let mut seen = std::collections::HashSet::with_capacity(steps.len());
+        if !steps.iter().all(|s| seen.insert(s.as_str())) {
+            return Err(StatusCode::BAD_REQUEST);
+        }
     }
     let gap_ms = (q.gap.clamp(1, 240) as i64) * 60_000;
     let (from_ts, to_ts) = range(q.days);

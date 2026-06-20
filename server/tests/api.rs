@@ -1549,3 +1549,107 @@ async fn funnel_rejects_too_few_steps(pool: PgPool) {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
+
+#[sqlx::test]
+async fn collect_coerces_unknown_device_to_null(pool: PgPool) {
+    // A bad device value used to fail the DB CHECK and silently drop the whole
+    // pageview (fire-and-forget insert); it must now be coerced to NULL.
+    let app = router(test_state(pool.clone(), None, None));
+    let resp = app
+        .oneshot(post_collect(json!({
+            "t": "pageview",
+            "s": "site-1",
+            "p": "/",
+            "ts": 1_700_000_000_000_i64,
+            "d": "smart-fridge"
+        })))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    wait_for_count(&pool, 1).await;
+
+    let device: Option<String> = sqlx::query_scalar("SELECT device FROM analytics_events LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(device, None);
+}
+
+#[sqlx::test]
+async fn collect_coerces_empty_vid_to_null(pool: PgPool) {
+    let app = router(test_state(pool.clone(), None, None));
+    let resp = app
+        .oneshot(post_collect(json!({
+            "t": "event",
+            "s": "site-1",
+            "p": "/",
+            "ts": 1_700_000_000_000_i64,
+            "n": "click",
+            "vid": ""
+        })))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    wait_for_count(&pool, 1).await;
+
+    let vid: Option<String> = sqlx::query_scalar("SELECT view_id FROM analytics_events LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(vid, None);
+}
+
+#[sqlx::test]
+async fn collect_rejects_oversize_event_prop_value(pool: PgPool) {
+    let app = router(test_state(pool, None, None));
+    let big = "x".repeat(2000);
+    let resp = app
+        .oneshot(post_collect(json!({
+            "t": "event",
+            "s": "site-1",
+            "p": "/",
+            "ts": 1_700_000_000_000_i64,
+            "n": "click",
+            "pr": { "blob": big }
+        })))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[sqlx::test]
+async fn collect_rejects_too_many_event_props(pool: PgPool) {
+    let app = router(test_state(pool, None, None));
+    let mut props = serde_json::Map::new();
+    for i in 0..50 {
+        props.insert(format!("k{i}"), json!(1));
+    }
+    let resp = app
+        .oneshot(post_collect(json!({
+            "t": "event",
+            "s": "site-1",
+            "p": "/",
+            "ts": 1_700_000_000_000_i64,
+            "n": "click",
+            "pr": Value::Object(props)
+        })))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[sqlx::test]
+async fn funnel_rejects_duplicate_steps(pool: PgPool) {
+    // /a,/b,/a — array_position() collapses the repeat to step 1, so the third
+    // step is unreachable; reject rather than report a false 0% conversion.
+    let app = router(test_state(pool, None, None));
+    let resp = app
+        .oneshot(
+            Request::get("/stats/funnel?site=s&days=365&steps=/a,/b,/a")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
