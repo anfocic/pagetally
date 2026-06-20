@@ -401,6 +401,77 @@ pub struct HeatmapCell {
     pub pageviews: i64,
 }
 
+/// Real-time active page-visits in the trailing `window_minutes`, keyed on the
+/// server `received_at` (not the client `ts`). `active` = distinct `view_id`
+/// with any event in the window; `pages` is the top active paths.
+#[derive(Debug, Clone, Serialize)]
+pub struct Realtime {
+    pub active: i64,
+    #[serde(rename = "windowMinutes")]
+    pub window_minutes: i64,
+    pub pages: Vec<TopRow>,
+}
+
+/// Per-page-visit engagement (site-wide). Rates are a fraction 0–1. Scroll /
+/// outbound metrics are `None` when the site emitted no such rows in range —
+/// scroll/outbound tracking is a client opt-in, so absence means "not measured",
+/// never "0% engaged".
+#[derive(Debug, Clone, Serialize)]
+pub struct Engagement {
+    /// Distinct page-visits (a `view_id` with a pageview) in range.
+    pub visits: i64,
+    /// Share of visits that were engaged: visible ≥10s OR scrolled ≥50% OR an
+    /// outbound/download click. A lower bound when scroll/outbound tracking is
+    /// off (it then rests on the time signal alone).
+    #[serde(rename = "engagedVisitRate", skip_serializing_if = "Option::is_none")]
+    pub engaged_visit_rate: Option<f64>,
+    /// Mean custom `track()` events per visit (auto scroll/outbound/download
+    /// excluded).
+    #[serde(rename = "avgEventsPerVisit", skip_serializing_if = "Option::is_none")]
+    pub avg_events_per_visit: Option<f64>,
+    /// Share of visits whose deepest scroll reached ≥75%.
+    #[serde(rename = "scrollReach75", skip_serializing_if = "Option::is_none")]
+    pub scroll_reach_75: Option<f64>,
+    /// Share of visits with at least one outbound-link click.
+    #[serde(rename = "outboundRate", skip_serializing_if = "Option::is_none")]
+    pub outbound_rate: Option<f64>,
+    /// Share of visits reaching each scroll milestone (a visit reaching 100%
+    /// counts in every lower bucket too).
+    #[serde(rename = "scrollFunnel", skip_serializing_if = "Option::is_none")]
+    pub scroll_funnel: Option<ScrollFunnel>,
+}
+
+/// Fraction of visits (0–1) reaching each scroll-depth milestone.
+#[derive(Debug, Clone, Serialize)]
+pub struct ScrollFunnel {
+    #[serde(rename = "25")]
+    pub p25: f64,
+    #[serde(rename = "50")]
+    pub p50: f64,
+    #[serde(rename = "75")]
+    pub p75: f64,
+    #[serde(rename = "100")]
+    pub p100: f64,
+}
+
+/// Per-path engagement row (`/stats/engagement?dim=path`). Each row exists only
+/// for paths with ≥1 visit, so `engagedVisitRate` / `avgEventsPerVisit` are
+/// always present; scroll / outbound rates follow the same opt-in omission rule
+/// as the site-wide object (gated on whether the *site* tracks them at all).
+#[derive(Debug, Clone, Serialize)]
+pub struct EngagementRow {
+    pub key: String,
+    pub visits: i64,
+    #[serde(rename = "engagedVisitRate")]
+    pub engaged_visit_rate: f64,
+    #[serde(rename = "avgEventsPerVisit")]
+    pub avg_events_per_visit: f64,
+    #[serde(rename = "scrollReach75", skip_serializing_if = "Option::is_none")]
+    pub scroll_reach_75: Option<f64>,
+    #[serde(rename = "outboundRate", skip_serializing_if = "Option::is_none")]
+    pub outbound_rate: Option<f64>,
+}
+
 /// `summary` wrapper for `compare=prev`. Flattens the current-window summary so
 /// the default (no `compare`) response shape is unchanged.
 #[derive(Debug, Clone, Serialize)]
