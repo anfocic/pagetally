@@ -3,9 +3,11 @@ pub mod contact;
 pub mod db;
 pub mod email;
 pub mod ingest;
+pub mod salt;
 pub mod state;
 pub mod stats;
 pub mod types;
+pub mod ua;
 
 use axum::Router;
 use axum::extract::{DefaultBodyLimit, State};

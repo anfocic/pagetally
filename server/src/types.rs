@@ -283,6 +283,14 @@ pub struct Summary {
     pub top_path: Option<String>,
     #[serde(rename = "avgTimeOnPageMs", skip_serializing_if = "Option::is_none")]
     pub avg_time_on_page_ms: Option<f64>,
+    /// Distinct visitor hashes (rung 2). `None` when sessions are disabled or
+    /// there is no session data in range.
+    #[serde(rename = "uniqueVisitors", skip_serializing_if = "Option::is_none")]
+    pub unique_visitors: Option<i64>,
+    /// Share (0–1) of sessions with a single pageview. `None` when sessions are
+    /// disabled or there is no session data in range.
+    #[serde(rename = "bounceRate", skip_serializing_if = "Option::is_none")]
+    pub bounce_rate: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -322,6 +330,8 @@ pub enum TopDimension {
     UtmSource,
     UtmMedium,
     UtmCampaign,
+    Browser,
+    Os,
 }
 
 impl TopDimension {
@@ -334,6 +344,8 @@ impl TopDimension {
             "utm_source" => Some(Self::UtmSource),
             "utm_medium" => Some(Self::UtmMedium),
             "utm_campaign" => Some(Self::UtmCampaign),
+            "browser" => Some(Self::Browser),
+            "os" => Some(Self::Os),
             _ => None,
         }
     }
@@ -347,6 +359,8 @@ impl TopDimension {
             Self::UtmSource => "utm_source",
             Self::UtmMedium => "utm_medium",
             Self::UtmCampaign => "utm_campaign",
+            Self::Browser => "browser",
+            Self::Os => "os",
         }
     }
 }

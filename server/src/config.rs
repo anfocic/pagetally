@@ -23,6 +23,11 @@ pub struct Config {
     /// `true` if the server is fronted by HTTPS (so HSTS is safe to send).
     /// The header is harmless on plain HTTP but pointless. Default false.
     pub behind_tls: bool,
+    /// Opt-in anonymized sessions (rung 2). When `true`, `/collect` reads the
+    /// client IP + User-Agent to derive a salted daily visitor hash (raw IP
+    /// never stored) and coarse browser/OS family. Default false — existing
+    /// self-hosters process neither IP nor UA unless they turn this on.
+    pub sessions_enabled: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -87,6 +92,11 @@ impl Config {
             .map(|s| matches!(s.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
             .unwrap_or(false);
 
+        let sessions_enabled = env::var("SESSIONS_ENABLED")
+            .ok()
+            .map(|s| matches!(s.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+            .unwrap_or(false);
+
         Ok(Self {
             bind_addr,
             database_url,
@@ -96,6 +106,7 @@ impl Config {
             contact_to,
             stats_origins,
             behind_tls,
+            sessions_enabled,
         })
     }
 }

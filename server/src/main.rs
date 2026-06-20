@@ -40,6 +40,7 @@ async fn main() -> anyhow::Result<()> {
         config: Arc::new(config.clone()),
         pool,
         mailer,
+        salt_cache: pagetally_server::salt::new_cache(),
     };
 
     let app = router_with_metrics(state);

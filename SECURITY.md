@@ -34,6 +34,7 @@ Out of scope:
 - The `/collect` and `/contact` endpoints are intentionally unauthenticated — they accept input from browsers — but you **should** rate-limit them at your reverse proxy. `/contact` triggers an outbound email per request and is an abuse target. The server enforces a 16 KB request-body cap on both, but does not rate-limit.
 - Keep the server behind TLS (Caddy in `deploy/install.sh` does this automatically).
 - CORS on `/stats/*` is permissive (`*`) but Bearer-gated. If you only call it from a known backend, lock it down at the reverse proxy.
+- `SESSIONS_ENABLED` is **off by default**: the server processes neither the client IP nor the User-Agent. Turning it on enables anonymized sessions — the IP and User-Agent are hashed with a daily-rotating salt (raw IP never stored) and the salt is deleted after 48h, so historical hashes cannot be re-linked. If you enable it, make sure your reverse proxy sets a correct `x-forwarded-for` / `x-real-ip`, and confirm your privacy policy reflects the change.
 
 ## Known advisories
 
