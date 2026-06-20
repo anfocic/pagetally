@@ -62,13 +62,21 @@ GET /stats/timeseries?site=my-site&days=30&bucket=day
 GET /stats/top?site=my-site&dim=path&limit=10
 GET /stats/events?site=my-site&name=scroll_depth&by=pct
 GET /stats/vitals?site=my-site&days=30
+GET /stats/heatmap?site=my-site&days=30&tz=Europe/Dublin
+GET /stats/channels?site=my-site&days=30
 ```
 
-`top?dim=path` returns `avgDurMs` per path. `summary` returns `avgTimeOnPageMs`. With sessions enabled (see below), `summary` also returns `uniqueVisitors` and `bounceRate`.
+`top?dim=path` returns `avgDurMs` and `medianDurMs` per path. `summary` returns `avgTimeOnPageMs`, `medianTimeOnPageMs`, and `p75TimeOnPageMs`. With sessions enabled (see below), `summary` also returns `uniqueVisitors` and `bounceRate`.
+
+- **`summary?compare=prev`** adds `previous` (same metrics for the immediately preceding equal-length window) and `change` (percentage deltas; `null` when the previous value is 0).
+- **`timeseries`** includes a per-bucket `uniqueVisitors` when sessions are on — plot this instead of the range-wide total (see the note below).
+- **`vitals`** (site-wide) includes a `distribution` of Core-Web-Vitals pass-rate buckets (`good` / `needsImprovement` / `poor` / `total`) per metric against Google's thresholds. **`vitals?dim=path&limit=N`** instead returns an array of per-path p75s, each with its own per-metric sample count (`lcpN`, `inpN`, … — INP is sparse, so it is reported separately to flag low-confidence p75s).
+- **`heatmap`** returns pageview counts per ISO weekday (1–7) × hour (0–23). `tz` is an optional IANA timezone for the hour bucketing (default `UTC`); an unknown timezone returns 400.
+- **`channels`** groups pageviews into marketing channels (Direct / Organic Search / Social / Paid / Campaign / Referral) from the referrer host + UTM tags. The brand lists are heuristic.
 
 > **Note on `uniqueVisitors`:** the visitor hash is salted with a salt that rotates every UTC day (and is then deleted), so the same person hashes differently each day. Over a multi-day range `uniqueVisitors` therefore counts *visitor-days*, not distinct people — a visitor active on N days counts as N. This is a deliberate consequence of the cookie-free, unlinkable-by-design model. For a per-day figure, query a 1-day range per day.
 
-`top` dimensions: `path`, `referrer`, `country`, `device`, `utm_source`, `utm_medium`, `utm_campaign`, and (sessions only) `browser`, `os`.
+`top` dimensions: `path`, `referrer`, `country`, `device`, `viewport`, `utm_source`, `utm_medium`, `utm_campaign`, and (sessions only) `browser`, `os`.
 
 `events` returns the top event names for a site; add `name=<event>&by=<prop>` to get the distribution of one event's prop value (e.g. scroll-depth milestones).
 
