@@ -1,4 +1,4 @@
-use pagetally_server::{config::Config, db, email::Mailer, router_with_metrics, state::AppState};
+use dullahan::{config::Config, db, email::Mailer, router_with_metrics, state::AppState};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::signal;
@@ -22,7 +22,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let config = Config::from_env()?;
-    tracing::info!(addr = %config.bind_addr, "starting pagetally");
+    tracing::info!(addr = %config.bind_addr, "starting dullahan");
 
     if config.admin_token.is_none() {
         tracing::warn!(
@@ -41,7 +41,7 @@ async fn main() -> anyhow::Result<()> {
         config: Arc::new(config.clone()),
         pool,
         mailer,
-        salt_cache: pagetally_server::salt::new_cache(),
+        salt_cache: dullahan::salt::new_cache(),
     };
 
     let app = router_with_metrics(state);

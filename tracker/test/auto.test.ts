@@ -14,8 +14,8 @@ describe('auto (script-tag bootstrap)', () => {
   beforeEach(() => {
     vi.resetModules()
     vi.restoreAllMocks()
-    delete (globalThis as Record<string, unknown>).__pagetally_active__
-    delete (window as unknown as Record<string, unknown>).pagetally
+    delete (globalThis as Record<string, unknown>).__dullahan_active__
+    delete (window as unknown as Record<string, unknown>).dullahan
     Object.defineProperty(document, 'currentScript', { value: null, configurable: true })
     document.head.innerHTML = ''
     document.body.innerHTML = ''
@@ -33,15 +33,15 @@ describe('auto (script-tag bootstrap)', () => {
     expect(body.s).toBe('demo')
   })
 
-  it('exposes window.pagetally.track for inline custom events', async () => {
+  it('exposes window.dullahan.track for inline custom events', async () => {
     const spy = vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
     injectScript({ 'data-site': 'demo', 'data-endpoint': 'https://x.test/collect' })
 
     await import('../src/auto')
     spy.mockClear()
 
-    const pt = (window as unknown as { pagetally: { track: (n: string, p?: unknown) => void } })
-      .pagetally
+    const pt = (window as unknown as { dullahan: { track: (n: string, p?: unknown) => void } })
+      .dullahan
     pt.track('signup', { plan: 'pro' })
 
     expect(spy).toHaveBeenCalledTimes(1)

@@ -21,7 +21,7 @@ export default defineConfig({
     stderr: 'pipe',
     env: {
       DATABASE_URL:
-        process.env.DATABASE_URL ?? 'postgres://fole@localhost/pagetally_e2e',
+        process.env.DATABASE_URL ?? 'postgres://fole@localhost/dullahan_e2e',
       ADMIN_TOKEN: 'e2e-token',
       BIND_ADDR: `127.0.0.1:${PORT}`,
     },

@@ -1,19 +1,19 @@
-# pagetally e2e
+# dullahan e2e
 
 End-to-end test of the **real** browser → server-hosted `/pt.js` → `/collect` →
 `/stats` path. A headless Chromium loads a page whose only integration is the
 one-line `<script src="/pt.js" data-site=…>` snippet; the test then asserts the
-pageview and a `window.pagetally.track(...)` custom event land in `/stats`.
+pageview and a `window.dullahan.track(...)` custom event land in `/stats`.
 
 It complements the fast unit/contract layers (which mock the network) by
 exercising the actual served bundle, real `sendBeacon`, and real HTTP ingest.
 
 ## Run locally
 
-Needs a `pagetally_e2e` Postgres database (the server creates the tables on boot):
+Needs a `dullahan_e2e` Postgres database (the server creates the tables on boot):
 
 ```bash
-createdb pagetally_e2e        # once
+createdb dullahan_e2e        # once
 npm ci
 npx playwright install chromium
 npm test

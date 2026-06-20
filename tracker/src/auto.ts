@@ -10,7 +10,7 @@
 // data-auto-track="false" disables automatic pageviews.
 import { Analytics } from './index'
 
-interface PageTallyGlobal {
+interface DullahanGlobal {
   track: (name: string, props?: Record<string, unknown>) => void
   page: (path?: string) => void
   stop: () => void
@@ -22,7 +22,7 @@ function findScriptEl(): HTMLScriptElement | null {
     return current
   }
   // currentScript is null for module/async scripts; fall back to the first
-  // pagetally tag on the page.
+  // dullahan tag on the page.
   return document.querySelector<HTMLScriptElement>('script[data-site]')
 }
 
@@ -34,7 +34,7 @@ function flag(el: HTMLScriptElement, key: string): boolean {
 try {
   const el = findScriptEl()
   if (!el) {
-    console.warn('pagetally: no <script data-site="..."> found; tracking not started')
+    console.warn('dullahan: no <script data-site="..."> found; tracking not started')
   } else {
     const instance = new Analytics({
       siteId: el.dataset.site ?? '',
@@ -46,8 +46,8 @@ try {
       trackOutboundLinks: flag(el, 'trackOutbound'),
     })
 
-    const w = window as unknown as { pagetally?: PageTallyGlobal }
-    w.pagetally = {
+    const w = window as unknown as { dullahan?: DullahanGlobal }
+    w.dullahan = {
       track: (name, props) => instance.track(name, props),
       page: (path) => instance.page(path),
       stop: () => instance.stop(),
@@ -56,6 +56,6 @@ try {
 } catch (err) {
   // Analytics must never break the host page.
   if (typeof console !== 'undefined') {
-    console.warn('pagetally: failed to start', err)
+    console.warn('dullahan: failed to start', err)
   }
 }

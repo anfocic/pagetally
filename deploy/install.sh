@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-shot installer for pagetally on a fresh Debian/Ubuntu box.
+# One-shot installer for dullahan on a fresh Debian/Ubuntu box.
 # Run AS ROOT. Requires: a domain pointing at this box, ports 80/443 open.
 #
 # Usage:
@@ -9,11 +9,11 @@
 #
 # What it does:
 #   1. apt install postgresql, caddy, build deps
-#   2. create OS user `pagetally`, dir /opt/pagetally
+#   2. create OS user `dullahan`, dir /opt/dullahan
 #   3. create PG role + DB
 #   4. install Rust toolchain (rustup, user-local)
-#   5. build pagetally-server from ../server (release)
-#   6. drop binary into /opt/pagetally + write env file
+#   5. build dullahan from ../server (release)
+#   6. drop binary into /opt/dullahan + write env file
 #   7. install systemd unit + Caddyfile, enable + start
 #
 # Re-running is safe: each step checks for existing state.
@@ -29,10 +29,10 @@ fi
 
 ALLOWED_SITES="${ALLOWED_SITES:-}"
 ADMIN_TOKEN="${ADMIN_TOKEN:-}"
-PG_DB="${PG_DB:-pagetally}"
-PG_USER="${PG_USER:-pagetally}"
+PG_DB="${PG_DB:-dullahan}"
+PG_USER="${PG_USER:-dullahan}"
 
-ENV_FILE="/opt/pagetally/pagetally.env"
+ENV_FILE="/opt/dullahan/dullahan.env"
 
 # Re-runs reuse the existing token. Only generate on first install.
 if [[ -z "$ADMIN_TOKEN" ]]; then
@@ -62,8 +62,8 @@ if ! command -v caddy >/dev/null 2>&1; then
 fi
 
 echo "==> os user + dirs"
-id pagetally >/dev/null 2>&1 || useradd --system --create-home --home /opt/pagetally --shell /usr/sbin/nologin pagetally
-install -d -o pagetally -g pagetally -m 750 /opt/pagetally
+id dullahan >/dev/null 2>&1 || useradd --system --create-home --home /opt/dullahan --shell /usr/sbin/nologin dullahan
+install -d -o dullahan -g dullahan -m 750 /opt/dullahan
 
 echo "==> postgres role + db"
 sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${PG_USER}'" | grep -q 1 \
@@ -71,42 +71,26 @@ sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${PG_USER}'" |
 sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${PG_DB}'" | grep -q 1 \
     || sudo -u postgres createdb -O "${PG_USER}" "${PG_DB}"
 
-echo "==> rust toolchain (user-local for pagetally)"
-if ! sudo -u pagetally test -x /opt/pagetally/.cargo/bin/cargo; then
-    sudo -u pagetally bash -c 'curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal'
+echo "==> rust toolchain (user-local for dullahan)"
+if ! sudo -u dullahan test -x /opt/dullahan/.cargo/bin/cargo; then
+    sudo -u dullahan bash -c 'curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal'
 fi
 
 echo "==> building release binary (this takes a few minutes)"
-install -d -o pagetally -g pagetally /opt/pagetally/build-src
-cp -r "$SERVER_DIR/Cargo.toml" "$SERVER_DIR/src" "$SERVER_DIR/migrations" /opt/pagetally/build-src/
-chown -R pagetally:pagetally /opt/pagetally/build-src
+install -d -o dullahan -g dullahan /opt/dullahan/build-src
+# The tracking script is vendored at server/assets/pt.js and compiled into the
+# binary (include_str!), so the build needs only Rust — no Node, no client build.
+cp -r "$SERVER_DIR/Cargo.toml" "$SERVER_DIR/src" "$SERVER_DIR/assets" "$SERVER_DIR/migrations" /opt/dullahan/build-src/
+chown -R dullahan:dullahan /opt/dullahan/build-src
 
-# Build the browser tracking script and hand its path to the server build, which
-# embeds it (include_str!) so /pt.js serves the real bundle. Best-effort: if Node
-# is unavailable the server still builds and /pt.js serves a placeholder.
-echo "==> building tracking script (client)"
-PT_SCRIPT_ENV=""
-if ! command -v node >/dev/null 2>&1; then
-    echo "    installing Node.js"
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null 2>&1 || true
-    apt-get install -y nodejs >/dev/null 2>&1 || true
-fi
-if command -v npm >/dev/null 2>&1 && (cd "$REPO_DIR/client" && npm ci --no-audit --no-fund && npm run build); then
-    install -o pagetally -g pagetally -m 644 "$REPO_DIR/client/dist/pt.js" /opt/pagetally/build-src/pt.js
-    PT_SCRIPT_ENV="PAGETALLY_SCRIPT=/opt/pagetally/build-src/pt.js"
-else
-    echo "    WARNING: client build unavailable; /pt.js will serve a placeholder."
-    echo "    Install Node 18+ and re-run to embed the real tracking script."
-fi
-
-sudo -u pagetally bash -c "cd /opt/pagetally/build-src && $PT_SCRIPT_ENV /opt/pagetally/.cargo/bin/cargo build --release --bin pagetally-server"
-install -o pagetally -g pagetally -m 755 /opt/pagetally/build-src/target/release/pagetally-server /opt/pagetally/pagetally-server
-rm -rf /opt/pagetally/build-src/target
+sudo -u dullahan bash -c "cd /opt/dullahan/build-src && /opt/dullahan/.cargo/bin/cargo build --release --bin dullahan"
+install -o dullahan -g dullahan -m 755 /opt/dullahan/build-src/target/release/dullahan /opt/dullahan/dullahan
+rm -rf /opt/dullahan/build-src/target
 
 echo "==> migrations dir (sqlx reads from CWD/migrations on boot)"
-rm -rf /opt/pagetally/migrations
-cp -r "$SERVER_DIR/migrations" /opt/pagetally/migrations
-chown -R pagetally:pagetally /opt/pagetally/migrations
+rm -rf /opt/dullahan/migrations
+cp -r "$SERVER_DIR/migrations" /opt/dullahan/migrations
+chown -R dullahan:dullahan /opt/dullahan/migrations
 
 echo "==> env file"
 PG_PORT=$(pg_lsclusters --no-header | awk '$4=="online"{print $3; exit}')
@@ -119,14 +103,14 @@ ALLOWED_SITES=${ALLOWED_SITES}
 ADMIN_TOKEN=${ADMIN_TOKEN}
 RUST_LOG=info,sqlx=warn
 EOF
-    chown pagetally:pagetally "$ENV_FILE"
+    chown dullahan:dullahan "$ENV_FILE"
     chmod 600 "$ENV_FILE"
 fi
 
 echo "==> systemd unit"
-install -m 644 "$REPO_DIR/deploy/pagetally.service" /etc/systemd/system/pagetally.service
+install -m 644 "$REPO_DIR/deploy/dullahan.service" /etc/systemd/system/dullahan.service
 systemctl daemon-reload
-systemctl enable --now pagetally
+systemctl enable --now dullahan
 
 echo "==> caddyfile"
 mkdir -p /etc/caddy
@@ -136,10 +120,10 @@ systemctl reload caddy 2>/dev/null || systemctl restart caddy
 
 echo
 echo "=========================================="
-echo "  pagetally is up at https://${DOMAIN}"
+echo "  dullahan is up at https://${DOMAIN}"
 echo "=========================================="
 echo "  health:    curl https://${DOMAIN}/health"
-echo "  logs:      journalctl -u pagetally -f"
+echo "  logs:      journalctl -u dullahan -f"
 echo "  redeploy:  re-run install.sh (rebuilds binary)"
 echo "=========================================="
 if [[ "${ADMIN_TOKEN_GENERATED:-0}" == "1" ]]; then

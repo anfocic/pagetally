@@ -1,8 +1,8 @@
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
+use dullahan::{config::Config, router, state::AppState};
 use http_body_util::BodyExt;
-use pagetally_server::{config::Config, router, state::AppState};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -23,7 +23,7 @@ fn state(pool: PgPool, admin_token: Option<&str>) -> AppState {
         }),
         pool,
         mailer: None,
-        salt_cache: pagetally_server::salt::new_cache(),
+        salt_cache: dullahan::salt::new_cache(),
     }
 }
 

@@ -1,4 +1,4 @@
-# pagetally — what's in the app today
+# dullahan — what's in the app today
 
 A privacy-first, cookie-free web analytics product in two halves: a tiny browser
 SDK that collects events, and a self-hostable Rust server that ingests them and
@@ -12,7 +12,7 @@ for how to work on the code see [`CLAUDE.md`](CLAUDE.md).
 ```
  Browser (your site)                      Your server (self-hosted)
  ┌─────────────────────┐   POST /collect  ┌───────────────────────────┐
- │  pagetally client   │ ───────────────▶ │  Axum ingest (fire-and-    │   ┌──────────┐
+ │  dullahan client   │ ───────────────▶ │  Axum ingest (fire-and-    │   ┌──────────┐
  │  (~3 KB gz, TS)     │   202 Accepted   │  forget write)            │──▶│ Postgres │
  └─────────────────────┘                  │                           │   │ analytics│
                                           │  /stats/* read API        │◀──│ _events  │
@@ -20,12 +20,12 @@ for how to work on the code see [`CLAUDE.md`](CLAUDE.md).
                                           └───────────────────────────┘
 ```
 
-- **Client** (`client/`, npm `pagetally`): auto-tracks pageviews (incl. SPA
+- **Client** (`client/`, npm `dullahan`): auto-tracks pageviews (incl. SPA
   navigations), web vitals, and visible time-on-page; optional opt-ins for scroll
   depth and outbound/download clicks; a `track()` API for custom events. Batches
   nothing sensitive — strips query/hash from URLs, rounds viewport, coarsens
   device. Guards against double-init and prerender double-counts.
-- **Server** (`server/`, crate `pagetally-server`): Axum + sqlx + Postgres.
+- **Server** (`server/`, crate `dullahan`): Axum + sqlx + Postgres.
   `/collect` ingest (rate-limited, validated, fire-and-forget insert), `/contact`,
   `/health`, Prometheus `/metrics`, and the `/stats/*` read API. Migrations apply
   automatically on startup.
@@ -82,7 +82,7 @@ Design conventions that run through all of it:
 
 - **Local server:** `DATABASE_URL=… ADMIN_TOKEN=… cargo run --release` (migrations
   auto-apply).
-- **Embed:** `npm i pagetally` → `new Analytics({ siteId, endpoint })`.
+- **Embed:** `npm i dullahan` → `new Analytics({ siteId, endpoint })`.
 - **Self-host:** `deploy/` has a one-shot `install.sh`, a systemd unit, a
   `Caddyfile`, dashboard-credential generation, and an env example. Operator
   hardening checklist is in the README.

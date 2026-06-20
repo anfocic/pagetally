@@ -70,7 +70,7 @@ impl Config {
                 Some(EmailConfig {
                     resend_api_key: api_key,
                     from,
-                    from_name: env::var("EMAIL_FROM_NAME").unwrap_or_else(|_| "pagetally".into()),
+                    from_name: env::var("EMAIL_FROM_NAME").unwrap_or_else(|_| "dullahan".into()),
                     timeout: Duration::from_secs(10),
                 })
             }
