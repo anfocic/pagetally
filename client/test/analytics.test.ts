@@ -139,6 +139,38 @@ describe('Analytics', () => {
     })
   })
 
+  describe('pageview dedupe', () => {
+    it('does not emit a pageview on hashchange (the hash is stripped from the path)', () => {
+      vi.useFakeTimers()
+      const spy = vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
+      const a = new Analytics({ endpoint: ENDPOINT, siteId: SITE_ID, autoTrack: true })
+      spy.mockClear()
+
+      // Past the 500ms same-path window, so this would re-count without the fix.
+      vi.advanceTimersByTime(600)
+      window.dispatchEvent(new Event('hashchange'))
+
+      expect(spy).not.toHaveBeenCalled()
+      a.stop()
+      vi.useRealTimers()
+    })
+
+    it('page() then a pushState to the same path emits only one pageview', async () => {
+      history.replaceState({}, '', '/start')
+      const spy = vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
+      const a = new Analytics({ endpoint: ENDPOINT, siteId: SITE_ID, autoTrack: true })
+      spy.mockClear()
+
+      a.page('/dash')
+      history.pushState({}, '', '/dash')
+
+      const all = await Promise.all(spy.mock.calls.map((c) => getPayloadFromCall(c)))
+      const dashViews = all.filter((p) => p.t === 'pageview' && p.p === '/dash')
+      expect(dashViews).toHaveLength(1)
+      a.stop()
+    })
+  })
+
   describe('respectDNT', () => {
     it('does not send when DNT is enabled and respectDNT is true', () => {
       Object.defineProperty(navigator, 'doNotTrack', {

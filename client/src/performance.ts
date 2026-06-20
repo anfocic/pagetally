@@ -14,6 +14,10 @@ export function startPerformanceTracking(
     ttfb: 0,
   }
 
+  // Per-interaction max latencies, keyed by interactionId; INP is derived from
+  // these at flush time (see the INP observer below).
+  const interactionMax = new Map<number, number>()
+
   // CLS is legitimately 0 on stable pages. Report it whenever the API exists
   // (even at 0) instead of only when > 0, so the server-side p75 isn't biased
   // upward by silently dropping every zero-shift page.
@@ -35,6 +39,13 @@ export function startPerformanceTracking(
     reported = true
     observers.forEach((o) => o.disconnect())
     cleanup()
+
+    if (interactionMax.size > 0) {
+      const sorted = [...interactionMax.values()].sort((a, b) => b - a)
+      // Drop ~1 worst interaction per 50; index 0 (the worst) for < 50.
+      const idx = Math.min(sorted.length - 1, Math.floor(sorted.length / 50))
+      metrics.inp = sorted[idx]!
+    }
 
     const clean: PerformanceMetrics = {}
     if (metrics.lcp > 0) clean.lcp = Math.round(metrics.lcp)
@@ -98,15 +109,21 @@ export function startPerformanceTracking(
     observers.push(obs)
   } catch {}
 
-  // INP — worst interaction latency across the page (input → next paint).
-  // PerformanceEventTiming.duration is the full interaction time, so the max
-  // is a close approximation of Interaction to Next Paint. (The old code
-  // reported processingStart - startTime, which is FID — a different,
-  // now-deprecated metric that reads far better than real INP.)
+  // INP — Interaction to Next Paint. A single interaction (e.g. tap) emits
+  // several event-timing entries (pointerdown, pointerup, click) sharing one
+  // interactionId; the interaction's latency is the max duration among them.
+  // INP is then a high percentile of per-interaction latencies that discards
+  // ~1 outlier per 50 interactions (the web-vitals definition) — the worst
+  // single interaction for short sessions, but trimmed on busy pages so one
+  // outlier tap doesn't inflate the reported value (and the server-side p75).
   try {
     const obs = new PerformanceObserver((list) => {
       for (const entry of list.getEntries()) {
-        if (entry.duration > metrics.inp) metrics.inp = entry.duration
+        const id = (entry as PerformanceEntry & { interactionId?: number })
+          .interactionId
+        if (!id) continue // 0/undefined => not a discrete interaction
+        const prev = interactionMax.get(id) ?? 0
+        if (entry.duration > prev) interactionMax.set(id, entry.duration)
       }
     })
     obs.observe({
