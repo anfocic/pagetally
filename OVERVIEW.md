@@ -12,7 +12,7 @@ for how to work on the code see [`CLAUDE.md`](CLAUDE.md).
 ```
  Browser (your site)                      Your server (self-hosted)
  ┌─────────────────────┐   POST /collect  ┌───────────────────────────┐
- │  dullahan client   │ ───────────────▶ │  Axum ingest (fire-and-    │   ┌──────────┐
+ │  dullahan tracker  │ ───────────────▶ │  Axum ingest (fire-and-    │   ┌──────────┐
  │  (~3 KB gz, TS)     │   202 Accepted   │  forget write)            │──▶│ Postgres │
  └─────────────────────┘                  │                           │   │ analytics│
                                           │  /stats/* read API        │◀──│ _events  │
@@ -20,7 +20,7 @@ for how to work on the code see [`CLAUDE.md`](CLAUDE.md).
                                           └───────────────────────────┘
 ```
 
-- **Client** (`client/`, npm `dullahan`): auto-tracks pageviews (incl. SPA
+- **Tracker** (`tracker/`, npm `dullahan`): auto-tracks pageviews (incl. SPA
   navigations), web vitals, and visible time-on-page; optional opt-ins for scroll
   depth and outbound/download clicks; a `track()` API for custom events. Batches
   nothing sensitive — strips query/hash from URLs, rounds viewport, coarsens

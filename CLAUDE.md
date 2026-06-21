@@ -10,12 +10,12 @@ how to **work on** the repo.
 
 | Path | What |
 |---|---|
-| `client/` | Browser SDK (TypeScript, built with tsup, tested with vitest). npm package `dullahan`. |
+| `tracker/` | Browser SDK (TypeScript, built with tsup, tested with vitest). npm package `dullahan`. |
 | `server/` | Ingest + read API (Rust + Axum + sqlx + Postgres). Crate `dullahan`. |
 | `server/migrations/` | sqlx SQL migrations, applied automatically on server startup. |
 | `deploy/` | Self-host: `install.sh`, systemd unit, `Caddyfile`, env example, dashboard-cred gen. |
 | `scripts/` | `loadtest.sh` (oha wrapper). |
-| `.github/workflows/ci.yml` | CI: lint (fmt+clippy), server (build+test+boot), client (vitest+build), cargo audit. |
+| `.github/workflows/ci.yml` | CI: lint (fmt+clippy), server (build+test+boot), tracker (vitest+build), cargo audit. |
 
 ## Build / test / lint
 
@@ -29,7 +29,7 @@ cargo clippy --all-targets -- -D warnings
 Tests use `#[sqlx::test]`, which spins up an ephemeral DB per test from
 `DATABASE_URL` (a `dullahan_test` DB with CREATEDB rights must exist locally).
 
-**Client** (from `client/`):
+**Tracker** (from `tracker/`):
 ```bash
 npm ci
 npm test            # vitest
